@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Field, STORED, STRING, Schema, TEXT, Value};
+use tantivy::schema::{
+    Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
+};
 use tantivy::tokenizer::{LowerCaser, NgramTokenizer, RemoveLongFilter, TextAnalyzer};
 use tantivy::{Index, ReloadPolicy, Term, doc};
 
@@ -139,7 +141,11 @@ impl Traverze {
 fn build_schema() -> Schema {
     let mut builder = Schema::builder();
     builder.add_text_field("path", STRING | STORED);
-    builder.add_text_field("contents", TEXT);
+    let text_indexing = TextFieldIndexing::default()
+        .set_tokenizer(TOKENIZER_NAME)
+        .set_index_option(IndexRecordOption::WithFreqsAndPositions);
+    let contents_options = TextOptions::default().set_indexing_options(text_indexing);
+    builder.add_text_field("contents", contents_options);
     builder.build()
 }
 
