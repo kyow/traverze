@@ -54,6 +54,10 @@ pub struct Traverze {
 
 impl Traverze {
     pub fn open_or_create(index_dir: &Path) -> Result<Self> {
+        Self::open_or_create_with_mode(index_dir, default_tokenizer_mode())
+    }
+
+    pub fn open_or_create_with_mode(index_dir: &Path, mode: TokenizerMode) -> Result<Self> {
         fs::create_dir_all(index_dir)
             .with_context(|| format!("failed to create index dir: {}", index_dir.display()))?;
 
@@ -64,7 +68,7 @@ impl Traverze {
                 .with_context(|| format!("failed to create index: {}", index_dir.display()))?,
         };
 
-        register_tokenizer(&index, default_tokenizer_mode())?;
+        register_tokenizer(&index, mode)?;
         let schema = index.schema();
         let path_field = schema
             .get_field("path")
