@@ -2,7 +2,14 @@
 name = "traverze"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 default-run = "traverze"
+description = "A utility library and CLI for full-text search built on Tantivy and Lindera."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kyow/traverze"
+readme = "README.md"
+keywords = ["full-text-search", "library", "cli", "tantivy", "lindera"]
+categories = ["command-line-utilities", "text-processing"]
 
 [features]
 default = ["tokenizer-ngram"]
