@@ -60,21 +60,25 @@ fn load_seed_texts() -> Result<Vec<String>> {
         .collect()
 }
 
-fn create_bench_files(base_dir: &Path, file_count: usize, seeds: &[String]) -> Result<Vec<PathBuf>> {
+fn create_bench_files(
+    base_dir: &Path,
+    file_count: usize,
+    seeds: &[String],
+) -> Result<Vec<PathBuf>> {
     let docs_dir = base_dir.join("docs");
     if docs_dir.exists() {
         fs::remove_dir_all(&docs_dir)
             .with_context(|| format!("failed to cleanup {}", docs_dir.display()))?;
     }
-    fs::create_dir_all(&docs_dir).with_context(|| format!("failed to create {}", docs_dir.display()))?;
+    fs::create_dir_all(&docs_dir)
+        .with_context(|| format!("failed to create {}", docs_dir.display()))?;
 
     let mut files = Vec::with_capacity(file_count);
     for i in 0..file_count {
         let path = docs_dir.join(format!("doc_{i:04}.txt"));
         let seed = &seeds[i % seeds.len()];
-        let body = format!(
-            "{seed}\n\n文書番号: {i}\nこの文書は tokenizer 比較ベンチ用のデータです。\n"
-        );
+        let body =
+            format!("{seed}\n\n文書番号: {i}\nこの文書は tokenizer 比較ベンチ用のデータです。\n");
         fs::write(&path, body).with_context(|| format!("failed to write {}", path.display()))?;
         files.push(path);
     }
@@ -94,7 +98,11 @@ fn run_mode(base_dir: &Path, files: &[PathBuf], mode: TokenizerMode, label: &str
     let indexed = engine.index_files(files)?;
     let index_elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
     if indexed != files.len() {
-        bail!("indexed files mismatch: expected {}, got {}", files.len(), indexed);
+        bail!(
+            "indexed files mismatch: expected {}, got {}",
+            files.len(),
+            indexed
+        );
     }
 
     let start = Instant::now();

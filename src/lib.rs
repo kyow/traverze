@@ -1,9 +1,9 @@
-﻿use std::fs;
+use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow};
 #[cfg(not(feature = "tokenizer-lindera-ipadic"))]
 use anyhow::bail;
+use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "tokenizer-lindera-ipadic")]
 use lindera::dictionary::load_dictionary;
 #[cfg(feature = "tokenizer-lindera-ipadic")]
@@ -87,14 +87,6 @@ impl Traverze {
             path_field,
             contents_field,
         })
-    }
-
-    pub fn open_or_create(index_dir: &Path) -> Result<Self> {
-        Self::new_in_dir(index_dir)
-    }
-
-    pub fn open_or_create_with_mode(index_dir: &Path, mode: TokenizerMode) -> Result<Self> {
-        Self::new_in_dir_with_mode(index_dir, mode)
     }
 
     pub fn index_files(&self, files: &[PathBuf]) -> Result<usize> {
