@@ -1,7 +1,17 @@
 ﻿use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
+#[cfg(not(feature = "tokenizer-lindera-ipadic"))]
+use anyhow::bail;
+#[cfg(feature = "tokenizer-lindera-ipadic")]
+use lindera::dictionary::load_dictionary;
+#[cfg(feature = "tokenizer-lindera-ipadic")]
+use lindera::mode::Mode;
+#[cfg(feature = "tokenizer-lindera-ipadic")]
+use lindera::segmenter::Segmenter;
+#[cfg(feature = "tokenizer-lindera-ipadic")]
+use lindera_tantivy::tokenizer::LinderaTokenizer;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::{
@@ -44,6 +54,10 @@ pub struct Traverze {
 
 impl Traverze {
     pub fn open_or_create(index_dir: &Path) -> Result<Self> {
+        Self::open_or_create_with_mode(index_dir, default_tokenizer_mode())
+    }
+
+    pub fn open_or_create_with_mode(index_dir: &Path, mode: TokenizerMode) -> Result<Self> {
         fs::create_dir_all(index_dir)
             .with_context(|| format!("failed to create index dir: {}", index_dir.display()))?;
 
@@ -54,7 +68,7 @@ impl Traverze {
                 .with_context(|| format!("failed to create index: {}", index_dir.display()))?,
         };
 
-        register_tokenizer(&index, default_tokenizer_mode())?;
+        register_tokenizer(&index, mode)?;
         let schema = index.schema();
         let path_field = schema
             .get_field("path")
@@ -160,9 +174,21 @@ fn register_tokenizer(index: &Index, mode: TokenizerMode) -> Result<()> {
             Ok(())
         }
         TokenizerMode::LinderaIpadic => {
-            bail!(
-                "`tokenizer-lindera-ipadic` is enabled, but Lindera integration is not wired yet. Start with ngram or add Lindera tokenizer implementation."
-            )
+            #[cfg(feature = "tokenizer-lindera-ipadic")]
+            {
+                let dictionary = load_dictionary("embedded://ipadic")
+                    .context("failed to load Lindera IPADIC dictionary")?;
+                let segmenter = Segmenter::new(Mode::Normal, dictionary, None);
+                let tokenizer = LinderaTokenizer::from_segmenter(segmenter);
+                index.tokenizers().register(TOKENIZER_NAME, tokenizer);
+                Ok(())
+            }
+            #[cfg(not(feature = "tokenizer-lindera-ipadic"))]
+            {
+                bail!(
+                    "Lindera tokenizer is not enabled. Build with `--features tokenizer-lindera-ipadic`."
+                )
+            }
         }
     }
 }
@@ -173,5 +199,14 @@ mod tests {
     #[test]
     fn default_mode_is_ngram_without_lindera_feature() {
         assert_eq!(crate::default_tokenizer_mode(), crate::TokenizerMode::Ngram);
+    }
+
+    #[cfg(feature = "tokenizer-lindera-ipadic")]
+    #[test]
+    fn default_mode_is_lindera_with_feature() {
+        assert_eq!(
+            crate::default_tokenizer_mode(),
+            crate::TokenizerMode::LinderaIpadic
+        );
     }
 }

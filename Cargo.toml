@@ -2,13 +2,16 @@
 name = "traverze"
 version = "0.1.0"
 edition = "2024"
+default-run = "traverze"
 
 [features]
 default = ["tokenizer-ngram"]
 tokenizer-ngram = []
-tokenizer-lindera-ipadic = []
+tokenizer-lindera-ipadic = ["dep:lindera", "dep:lindera-tantivy", "lindera-tantivy/embed-ipadic"]
 
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 tantivy = "0.25.0"
+lindera = { version = "2.2.0", optional = true }
+lindera-tantivy = { version = "2.0.0", optional = true, default-features = false }
