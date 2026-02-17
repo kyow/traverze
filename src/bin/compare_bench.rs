@@ -88,7 +88,7 @@ fn run_mode(base_dir: &Path, files: &[PathBuf], mode: TokenizerMode, label: &str
             .with_context(|| format!("failed to cleanup {}", index_dir.display()))?;
     }
 
-    let engine = Traverze::open_or_create_with_mode(&index_dir, mode)?;
+    let engine = Traverze::new_in_dir_with_mode(&index_dir, mode)?;
 
     let start = Instant::now();
     let indexed = engine.index_files(files)?;

@@ -21,6 +21,7 @@ use tantivy::tokenizer::{LowerCaser, NgramTokenizer, RemoveLongFilter, TextAnaly
 use tantivy::{Index, ReloadPolicy, Term, doc};
 
 const TOKENIZER_NAME: &str = "traverze_ja";
+const DEFAULT_INDEX_DIR: &str = ".traverze-index";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenizerMode {
@@ -53,11 +54,15 @@ pub struct Traverze {
 }
 
 impl Traverze {
-    pub fn open_or_create(index_dir: &Path) -> Result<Self> {
-        Self::open_or_create_with_mode(index_dir, default_tokenizer_mode())
+    pub fn new() -> Result<Self> {
+        Self::new_in_dir(Path::new(DEFAULT_INDEX_DIR))
     }
 
-    pub fn open_or_create_with_mode(index_dir: &Path, mode: TokenizerMode) -> Result<Self> {
+    pub fn new_in_dir(index_dir: &Path) -> Result<Self> {
+        Self::new_in_dir_with_mode(index_dir, default_tokenizer_mode())
+    }
+
+    pub fn new_in_dir_with_mode(index_dir: &Path, mode: TokenizerMode) -> Result<Self> {
         fs::create_dir_all(index_dir)
             .with_context(|| format!("failed to create index dir: {}", index_dir.display()))?;
 
@@ -82,6 +87,14 @@ impl Traverze {
             path_field,
             contents_field,
         })
+    }
+
+    pub fn open_or_create(index_dir: &Path) -> Result<Self> {
+        Self::new_in_dir(index_dir)
+    }
+
+    pub fn open_or_create_with_mode(index_dir: &Path, mode: TokenizerMode) -> Result<Self> {
+        Self::new_in_dir_with_mode(index_dir, mode)
     }
 
     pub fn index_files(&self, files: &[PathBuf]) -> Result<usize> {
