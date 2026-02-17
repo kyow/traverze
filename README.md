@@ -11,6 +11,7 @@ A small full-text search CLI/library built with Tantivy.
 
 ```bash
 traverze index [--index-dir <DIR>] <FILES...>
+traverze remove [--index-dir <DIR>] <FILES...>
 traverze search [--index-dir <DIR>] [--limit <N>] <QUERY>
 ```
 

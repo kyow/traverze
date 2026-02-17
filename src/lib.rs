@@ -87,7 +87,7 @@ impl Traverze {
     pub fn index_files(&self, files: &[PathBuf]) -> Result<usize> {
         let mut writer = self
             .index
-            .writer(50_000_000)
+            .writer::<tantivy::schema::TantivyDocument>(50_000_000)
             .context("failed to create index writer")?;
 
         let mut count = 0usize;
@@ -95,7 +95,7 @@ impl Traverze {
             if !file.is_file() {
                 continue;
             }
-            let abs = fs::canonicalize(file).unwrap_or_else(|_| file.clone());
+            let abs = normalize_path(file);
             let content = fs::read_to_string(&abs)
                 .or_else(|_| fs::read(&abs).map(|b| String::from_utf8_lossy(&b).into_owned()))
                 .with_context(|| format!("failed to read file: {}", abs.display()))?;
@@ -108,6 +108,24 @@ impl Traverze {
                     self.contents_field => content,
                 ))
                 .context("failed to add document")?;
+            count += 1;
+        }
+
+        writer.commit().context("failed to commit index")?;
+        Ok(count)
+    }
+
+    pub fn remove_files(&self, files: &[PathBuf]) -> Result<usize> {
+        let mut writer = self
+            .index
+            .writer::<tantivy::schema::TantivyDocument>(50_000_000)
+            .context("failed to create index writer")?;
+
+        let mut count = 0usize;
+        for file in files {
+            let abs = normalize_path(file);
+            let path_text = abs.to_string_lossy().to_string();
+            writer.delete_term(Term::from_field_text(self.path_field, &path_text));
             count += 1;
         }
 
@@ -150,6 +168,18 @@ impl Traverze {
 
         Ok(hits)
     }
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or_else(|_| path.to_path_buf())
+        }
+    })
 }
 
 fn build_schema() -> Schema {
