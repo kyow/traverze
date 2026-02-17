@@ -1,9 +1,9 @@
-﻿use std::fs;
+use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow};
 #[cfg(not(feature = "tokenizer-lindera-ipadic"))]
 use anyhow::bail;
+use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "tokenizer-lindera-ipadic")]
 use lindera::dictionary::load_dictionary;
 #[cfg(feature = "tokenizer-lindera-ipadic")]
@@ -21,6 +21,7 @@ use tantivy::tokenizer::{LowerCaser, NgramTokenizer, RemoveLongFilter, TextAnaly
 use tantivy::{Index, ReloadPolicy, Term, doc};
 
 const TOKENIZER_NAME: &str = "traverze_ja";
+const DEFAULT_INDEX_DIR: &str = ".traverze-index";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenizerMode {
@@ -53,11 +54,15 @@ pub struct Traverze {
 }
 
 impl Traverze {
-    pub fn open_or_create(index_dir: &Path) -> Result<Self> {
-        Self::open_or_create_with_mode(index_dir, default_tokenizer_mode())
+    pub fn new() -> Result<Self> {
+        Self::new_in_dir(Path::new(DEFAULT_INDEX_DIR))
     }
 
-    pub fn open_or_create_with_mode(index_dir: &Path, mode: TokenizerMode) -> Result<Self> {
+    pub fn new_in_dir(index_dir: &Path) -> Result<Self> {
+        Self::new_in_dir_with_mode(index_dir, default_tokenizer_mode())
+    }
+
+    pub fn new_in_dir_with_mode(index_dir: &Path, mode: TokenizerMode) -> Result<Self> {
         fs::create_dir_all(index_dir)
             .with_context(|| format!("failed to create index dir: {}", index_dir.display()))?;
 
@@ -87,7 +92,7 @@ impl Traverze {
     pub fn index_files(&self, files: &[PathBuf]) -> Result<usize> {
         let mut writer = self
             .index
-            .writer(50_000_000)
+            .writer::<tantivy::schema::TantivyDocument>(50_000_000)
             .context("failed to create index writer")?;
 
         let mut count = 0usize;
@@ -95,7 +100,7 @@ impl Traverze {
             if !file.is_file() {
                 continue;
             }
-            let abs = fs::canonicalize(file).unwrap_or_else(|_| file.clone());
+            let abs = normalize_path(file);
             let content = fs::read_to_string(&abs)
                 .or_else(|_| fs::read(&abs).map(|b| String::from_utf8_lossy(&b).into_owned()))
                 .with_context(|| format!("failed to read file: {}", abs.display()))?;
@@ -108,6 +113,24 @@ impl Traverze {
                     self.contents_field => content,
                 ))
                 .context("failed to add document")?;
+            count += 1;
+        }
+
+        writer.commit().context("failed to commit index")?;
+        Ok(count)
+    }
+
+    pub fn remove_files(&self, files: &[PathBuf]) -> Result<usize> {
+        let mut writer = self
+            .index
+            .writer::<tantivy::schema::TantivyDocument>(50_000_000)
+            .context("failed to create index writer")?;
+
+        let mut count = 0usize;
+        for file in files {
+            let abs = normalize_path(file);
+            let path_text = abs.to_string_lossy().to_string();
+            writer.delete_term(Term::from_field_text(self.path_field, &path_text));
             count += 1;
         }
 
@@ -150,6 +173,18 @@ impl Traverze {
 
         Ok(hits)
     }
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or_else(|_| path.to_path_buf())
+        }
+    })
 }
 
 fn build_schema() -> Schema {

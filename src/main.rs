@@ -20,6 +20,12 @@ enum Commands {
         #[arg(required = true)]
         files: Vec<PathBuf>,
     },
+    Remove {
+        #[arg(long, default_value = ".traverze-index")]
+        index_dir: PathBuf,
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
     Search {
         #[arg(long, default_value = ".traverze-index")]
         index_dir: PathBuf,
@@ -34,17 +40,23 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Index { index_dir, files } => {
-            let engine = traverze::Traverze::open_or_create(&index_dir)?;
+            let engine = traverze::Traverze::new_in_dir(&index_dir)?;
             let (indexed, elapsed) = time_block(|| engine.index_files(&files))?;
             println!("indexed {} file(s)", indexed);
             eprintln!("index_time_ms\t{:.3}", elapsed_ms(elapsed));
+        }
+        Commands::Remove { index_dir, files } => {
+            let engine = traverze::Traverze::new_in_dir(&index_dir)?;
+            let (removed, elapsed) = time_block(|| engine.remove_files(&files))?;
+            println!("removed {} file(s)", removed);
+            eprintln!("remove_time_ms\t{:.3}", elapsed_ms(elapsed));
         }
         Commands::Search {
             index_dir,
             limit,
             query,
         } => {
-            let engine = traverze::Traverze::open_or_create(&index_dir)?;
+            let engine = traverze::Traverze::new_in_dir(&index_dir)?;
             let (hits, elapsed) = time_block(|| engine.search(&query, limit))?;
             for hit in hits {
                 println!("{:.3}\t{}", hit.score, hit.path);
