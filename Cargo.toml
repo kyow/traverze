@@ -2,6 +2,7 @@
 name = "traverze"
 version = "0.1.0"
 edition = "2024"
+default-run = "traverze"
 
 [features]
 default = ["tokenizer-ngram"]
