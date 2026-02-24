@@ -17,6 +17,7 @@ use tantivy::query::QueryParser;
 use tantivy::schema::{
     Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
+use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{LowerCaser, NgramTokenizer, RemoveLongFilter, TextAnalyzer};
 use tantivy::{Index, ReloadPolicy, Term, doc};
 
@@ -44,6 +45,49 @@ pub fn default_tokenizer_mode() -> TokenizerMode {
 pub struct SearchHit {
     pub path: String,
     pub score: f32,
+    pub snippet: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnippetFormat {
+    Text,
+    Html,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SnippetOptions {
+    pub max_num_chars: usize,
+    pub format: SnippetFormat,
+}
+
+impl Default for SnippetOptions {
+    fn default() -> Self {
+        Self {
+            max_num_chars: 150,
+            format: SnippetFormat::Text,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SearchOptions {
+    pub limit: usize,
+    pub snippet: Option<SnippetOptions>,
+}
+
+impl SearchOptions {
+    pub fn with_limit(limit: usize) -> Self {
+        Self {
+            limit,
+            snippet: None,
+        }
+    }
+}
+
+impl Default for SearchOptions {
+    fn default() -> Self {
+        Self::with_limit(20)
+    }
 }
 
 #[derive(Clone)]
@@ -139,6 +183,10 @@ impl Traverze {
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        self.search_with_options(query, SearchOptions::with_limit(limit))
+    }
+
+    pub fn search_with_options(&self, query: &str, options: SearchOptions) -> Result<Vec<SearchHit>> {
         let reader = self
             .index
             .reader_builder()
@@ -148,13 +196,22 @@ impl Traverze {
         let searcher = reader.searcher();
 
         let query_parser = QueryParser::for_index(&self.index, vec![self.contents_field]);
-        let query = query_parser
+        let parsed_query = query_parser
             .parse_query(query)
             .context("failed to parse query")?;
 
         let top_docs = searcher
-            .search(&query, &TopDocs::with_limit(limit))
+            .search(&parsed_query, &TopDocs::with_limit(options.limit))
             .context("failed to run search")?;
+
+        let mut snippet_generator = if let Some(snippet_options) = options.snippet {
+            let mut generator = SnippetGenerator::create(&searcher, &*parsed_query, self.contents_field)
+                .context("failed to create snippet generator")?;
+            generator.set_max_num_chars(snippet_options.max_num_chars);
+            Some((generator, snippet_options.format))
+        } else {
+            None
+        };
 
         let mut hits = Vec::with_capacity(top_docs.len());
         for (score, doc_addr) in top_docs {
@@ -167,7 +224,18 @@ impl Traverze {
                 .unwrap_or("")
                 .to_string();
             if !path.is_empty() {
-                hits.push(SearchHit { path, score });
+                let snippet = snippet_generator.as_mut().map(|(generator, format)| {
+                    let snippet = generator.snippet_from_doc(&retrieved);
+                    match format {
+                        SnippetFormat::Text => snippet.fragment().to_string(),
+                        SnippetFormat::Html => snippet.to_html(),
+                    }
+                });
+                hits.push(SearchHit {
+                    path,
+                    score,
+                    snippet,
+                });
             }
         }
 
@@ -193,7 +261,9 @@ fn build_schema() -> Schema {
     let text_indexing = TextFieldIndexing::default()
         .set_tokenizer(TOKENIZER_NAME)
         .set_index_option(IndexRecordOption::WithFreqsAndPositions);
-    let contents_options = TextOptions::default().set_indexing_options(text_indexing);
+    let contents_options = TextOptions::default()
+        .set_stored()
+        .set_indexing_options(text_indexing);
     builder.add_text_field("contents", contents_options);
     builder.build()
 }

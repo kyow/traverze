@@ -31,8 +31,29 @@ enum Commands {
         index_dir: PathBuf,
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        #[arg(long, default_value_t = false)]
+        with_snippet: bool,
+        #[arg(long, default_value_t = 150)]
+        snippet_max_chars: usize,
+        #[arg(long, value_enum, default_value_t = SnippetFormatArg::Text)]
+        snippet_format: SnippetFormatArg,
         query: String,
     },
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum SnippetFormatArg {
+    Text,
+    Html,
+}
+
+impl From<SnippetFormatArg> for traverze::SnippetFormat {
+    fn from(value: SnippetFormatArg) -> Self {
+        match value {
+            SnippetFormatArg::Text => Self::Text,
+            SnippetFormatArg::Html => Self::Html,
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -54,12 +75,30 @@ fn main() -> Result<()> {
         Commands::Search {
             index_dir,
             limit,
+            with_snippet,
+            snippet_max_chars,
+            snippet_format,
             query,
         } => {
             let engine = traverze::Traverze::new_in_dir(&index_dir)?;
-            let (hits, elapsed) = time_block(|| engine.search(&query, limit))?;
+            let search_options = traverze::SearchOptions {
+                limit,
+                snippet: with_snippet.then_some(traverze::SnippetOptions {
+                    max_num_chars: snippet_max_chars,
+                    format: snippet_format.into(),
+                }),
+            };
+            let (hits, elapsed) = time_block(|| engine.search_with_options(&query, search_options))?;
             for hit in hits {
-                println!("{:.3}\t{}", hit.score, hit.path);
+                if let Some(snippet) = hit.snippet {
+                    let escaped = snippet
+                        .replace('\r', "\\r")
+                        .replace('\n', "\\n")
+                        .replace('\t', "\\t");
+                    println!("{:.3}\t{}\t{}", hit.score, hit.path, escaped);
+                } else {
+                    println!("{:.3}\t{}", hit.score, hit.path);
+                }
             }
             eprintln!("search_time_ms\t{:.3}", elapsed_ms(elapsed));
         }

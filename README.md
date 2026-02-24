@@ -12,7 +12,7 @@ A utility library and CLI for full-text search built on Tantivy and Lindera.
 ```bash
 traverze index [--index-dir <DIR>] <FILES...>
 traverze remove [--index-dir <DIR>] <FILES...>
-traverze search [--index-dir <DIR>] [--limit <N>] <QUERY>
+traverze search [--index-dir <DIR>] [--limit <N>] [--with-snippet] [--snippet-max-chars <N>] [--snippet-format text|html] <QUERY>
 ```
 
 ## Library Usage
