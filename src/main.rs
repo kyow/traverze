@@ -1,7 +1,8 @@
+use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -17,7 +18,10 @@ enum Commands {
     Index {
         #[arg(long, default_value = ".traverze-index")]
         index_dir: PathBuf,
-        #[arg(required = true)]
+        #[arg(long, default_value_t = false)]
+        with_snippet: bool,
+        #[arg(long, default_value_t = false)]
+        reset: bool,
         files: Vec<PathBuf>,
     },
     Remove {
@@ -31,16 +35,67 @@ enum Commands {
         index_dir: PathBuf,
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        #[arg(long, default_value_t = false)]
+        with_snippet: bool,
+        #[arg(long, default_value_t = 150)]
+        snippet_max_chars: usize,
+        #[arg(long, value_enum, default_value_t = SnippetFormatArg::Text)]
+        snippet_format: SnippetFormatArg,
         query: String,
     },
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum SnippetFormatArg {
+    Text,
+    Html,
+}
+
+impl From<SnippetFormatArg> for traverze::SnippetFormat {
+    fn from(value: SnippetFormatArg) -> Self {
+        match value {
+            SnippetFormatArg::Text => Self::Text,
+            SnippetFormatArg::Html => Self::Html,
+        }
+    }
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Index { index_dir, files } => {
-            let engine = traverze::Traverze::new_in_dir(&index_dir)?;
+        Commands::Index {
+            index_dir,
+            with_snippet,
+            reset,
+            files,
+        } => {
+            if reset && files.is_empty() {
+                if index_dir.exists() {
+                    fs::remove_dir_all(&index_dir)?;
+                }
+                println!("reset index at {}", index_dir.display());
+                return Ok(());
+            }
+            if reset && index_dir.exists() {
+                fs::remove_dir_all(&index_dir)?;
+            }
+            let engine_result = traverze::Traverze::new_in_dir_for_indexing(
+                &index_dir,
+                traverze::default_tokenizer_mode(),
+                with_snippet,
+            );
+            let engine = match engine_result {
+                Ok(engine) => engine,
+                Err(err) if err.to_string().contains("index snippet support mismatch") => {
+                    return Err(anyhow!(
+                        "index settings do not match existing index. recreate with `traverze index --index-dir {} --reset{} <FILES...>`",
+                        index_dir.display(),
+                        if with_snippet { " --with-snippet" } else { "" }
+                    ));
+                }
+                Err(err) => return Err(err),
+            };
             let (indexed, elapsed) = time_block(|| engine.index_files(&files))?;
             println!("indexed {} file(s)", indexed);
             eprintln!("index_time_ms\t{:.3}", elapsed_ms(elapsed));
@@ -54,12 +109,37 @@ fn main() -> Result<()> {
         Commands::Search {
             index_dir,
             limit,
+            with_snippet,
+            snippet_max_chars,
+            snippet_format,
             query,
         } => {
             let engine = traverze::Traverze::new_in_dir(&index_dir)?;
-            let (hits, elapsed) = time_block(|| engine.search(&query, limit))?;
+            if with_snippet && !engine.supports_snippet() {
+                return Err(anyhow!(
+                    "this index does not support snippet. run `traverze index --index-dir {} --reset` and then `traverze index --index-dir {} --with-snippet <FILES...>`",
+                    index_dir.display(),
+                    index_dir.display()
+                ));
+            }
+            let search_options = traverze::SearchOptions {
+                limit,
+                snippet: with_snippet.then_some(traverze::SnippetOptions {
+                    max_num_chars: snippet_max_chars,
+                    format: snippet_format.into(),
+                }),
+            };
+            let (hits, elapsed) = time_block(|| engine.search_with_options(&query, search_options))?;
             for hit in hits {
-                println!("{:.3}\t{}", hit.score, hit.path);
+                if let Some(snippet) = hit.snippet {
+                    let escaped = snippet
+                        .replace('\r', "\\r")
+                        .replace('\n', "\\n")
+                        .replace('\t', "\\t");
+                    println!("{:.3}\t{}\t{}", hit.score, hit.path, escaped);
+                } else {
+                    println!("{:.3}\t{}", hit.score, hit.path);
+                }
             }
             eprintln!("search_time_ms\t{:.3}", elapsed_ms(elapsed));
         }
