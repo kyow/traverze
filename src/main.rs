@@ -117,7 +117,8 @@ fn main() -> Result<()> {
             let engine = traverze::Traverze::new_in_dir(&index_dir)?;
             if with_snippet && !engine.supports_snippet() {
                 return Err(anyhow!(
-                    "this index does not support snippet. recreate with `traverze index --index-dir {} --reset --with-snippet <FILES...>`",
+                    "this index does not support snippet. run `traverze index --index-dir {} --reset` and then `traverze index --index-dir {} --with-snippet <FILES...>`",
+                    index_dir.display(),
                     index_dir.display()
                 ));
             }
