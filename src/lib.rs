@@ -95,6 +95,7 @@ pub struct Traverze {
     index: Index,
     path_field: Field,
     contents_field: Field,
+    contents_is_stored: bool,
 }
 
 impl Traverze {
@@ -107,10 +108,33 @@ impl Traverze {
     }
 
     pub fn new_in_dir_with_mode(index_dir: &Path, mode: TokenizerMode) -> Result<Self> {
+        Self::open_or_create(index_dir, mode, build_schema(false))
+    }
+
+    pub fn new_in_dir_for_indexing(
+        index_dir: &Path,
+        mode: TokenizerMode,
+        with_snippet: bool,
+    ) -> Result<Self> {
+        let engine = Self::open_or_create(index_dir, mode, build_schema(with_snippet))?;
+        if engine.supports_snippet() != with_snippet {
+            let expected = if with_snippet { "enabled" } else { "disabled" };
+            let actual = if engine.supports_snippet() {
+                "enabled"
+            } else {
+                "disabled"
+            };
+            return Err(anyhow!(
+                "index snippet support mismatch: expected {expected}, but existing index is {actual}"
+            ));
+        }
+        Ok(engine)
+    }
+
+    fn open_or_create(index_dir: &Path, mode: TokenizerMode, schema: Schema) -> Result<Self> {
         fs::create_dir_all(index_dir)
             .with_context(|| format!("failed to create index dir: {}", index_dir.display()))?;
 
-        let schema = build_schema();
         let index = match Index::open_in_dir(index_dir) {
             Ok(index) => index,
             Err(_) => Index::create_in_dir(index_dir, schema)
@@ -125,11 +149,13 @@ impl Traverze {
         let contents_field = schema
             .get_field("contents")
             .map_err(|_| anyhow!("`contents` field is missing in schema"))?;
+        let contents_is_stored = schema.get_field_entry(contents_field).is_stored();
 
         Ok(Self {
             index,
             path_field,
             contents_field,
+            contents_is_stored,
         })
     }
 
@@ -205,6 +231,11 @@ impl Traverze {
             .context("failed to run search")?;
 
         let mut snippet_generator = if let Some(snippet_options) = options.snippet {
+            if !self.contents_is_stored {
+                return Err(anyhow!(
+                    "snippet is not available for this index. recreate index with snippet storage enabled"
+                ));
+            }
             let mut generator = SnippetGenerator::create(&searcher, &*parsed_query, self.contents_field)
                 .context("failed to create snippet generator")?;
             generator.set_max_num_chars(snippet_options.max_num_chars);
@@ -241,6 +272,10 @@ impl Traverze {
 
         Ok(hits)
     }
+
+    pub fn supports_snippet(&self) -> bool {
+        self.contents_is_stored
+    }
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -255,15 +290,19 @@ fn normalize_path(path: &Path) -> PathBuf {
     })
 }
 
-fn build_schema() -> Schema {
+fn build_schema(with_snippet: bool) -> Schema {
     let mut builder = Schema::builder();
     builder.add_text_field("path", STRING | STORED);
     let text_indexing = TextFieldIndexing::default()
         .set_tokenizer(TOKENIZER_NAME)
         .set_index_option(IndexRecordOption::WithFreqsAndPositions);
-    let contents_options = TextOptions::default()
-        .set_stored()
-        .set_indexing_options(text_indexing);
+    let contents_options = if with_snippet {
+        TextOptions::default()
+            .set_stored()
+            .set_indexing_options(text_indexing)
+    } else {
+        TextOptions::default().set_indexing_options(text_indexing)
+    };
     builder.add_text_field("contents", contents_options);
     builder.build()
 }

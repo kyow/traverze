@@ -10,10 +10,16 @@ A utility library and CLI for full-text search built on Tantivy and Lindera.
 ## CLI
 
 ```bash
-traverze index [--index-dir <DIR>] <FILES...>
+traverze index [--index-dir <DIR>] [--with-snippet] [--reset] [FILES...]
 traverze remove [--index-dir <DIR>] <FILES...>
 traverze search [--index-dir <DIR>] [--limit <N>] [--with-snippet] [--snippet-max-chars <N>] [--snippet-format text|html] <QUERY>
 ```
+
+Notes:
+- `index` default is fast mode (no stored `contents`).
+- `index --reset` without files only deletes the index directory.
+- To enable snippets, build index with `index --with-snippet`.
+- If `search --with-snippet` is used on a non-snippet index, recreate with `index --reset --with-snippet`.
 
 ## Library Usage
 
