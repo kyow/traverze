@@ -27,14 +27,14 @@ Notes:
 
 ```toml
 [dependencies]
-traverze = "0.1"
+traverze = "0.2"
 ```
 
 Use Lindera (IPADIC) tokenizer:
 
 ```toml
 [dependencies]
-traverze = { version = "0.1", features = ["tokenizer-lindera-ipadic"] }
+traverze = { version = "0.2", features = ["tokenizer-lindera-ipadic"] }
 ```
 
 ### Minimal example
@@ -45,7 +45,7 @@ use traverze::Traverze;
 
 fn main() -> anyhow::Result<()> {
     let index_dir = PathBuf::from("./.traverze-index");
-    let engine = Traverze::open_or_create(&index_dir)?;
+    let engine = Traverze::new_in_dir(&index_dir)?;
 
     let files = vec![
         PathBuf::from("README.md"),
