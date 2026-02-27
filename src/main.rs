@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "traverze")]
-#[command(about = "File full-text search with Tantivy")]
+#[command(about = "Full-text search CLI built on Tantivy and Lindera")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -15,6 +15,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Index files for full-text search
     Index {
         #[arg(long, default_value = ".traverze-index")]
         index_dir: PathBuf,
@@ -24,12 +25,14 @@ enum Commands {
         reset: bool,
         files: Vec<PathBuf>,
     },
+    /// Remove files from the index
     Remove {
         #[arg(long, default_value = ".traverze-index")]
         index_dir: PathBuf,
         #[arg(required = true)]
         files: Vec<PathBuf>,
     },
+    /// Search the index for a query
     Search {
         #[arg(long, default_value = ".traverze-index")]
         index_dir: PathBuf,
