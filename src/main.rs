@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "traverze")]
+#[command(version)]
 #[command(about = "Full-text search CLI built on Tantivy and Lindera")]
 struct Cli {
     #[command(subcommand)]
