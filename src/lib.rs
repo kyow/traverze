@@ -212,7 +212,11 @@ impl Traverze {
         self.search_with_options(query, SearchOptions::with_limit(limit))
     }
 
-    pub fn search_with_options(&self, query: &str, options: SearchOptions) -> Result<Vec<SearchHit>> {
+    pub fn search_with_options(
+        &self,
+        query: &str,
+        options: SearchOptions,
+    ) -> Result<Vec<SearchHit>> {
         let reader = self
             .index
             .reader_builder()
@@ -236,8 +240,9 @@ impl Traverze {
                     "snippet is not available for this index. recreate index with snippet storage enabled"
                 ));
             }
-            let mut generator = SnippetGenerator::create(&searcher, &*parsed_query, self.contents_field)
-                .context("failed to create snippet generator")?;
+            let mut generator =
+                SnippetGenerator::create(&searcher, &*parsed_query, self.contents_field)
+                    .context("failed to create snippet generator")?;
             generator.set_max_num_chars(snippet_options.max_num_chars);
             Some((generator, snippet_options.format))
         } else {

@@ -129,7 +129,8 @@ fn main() -> Result<()> {
                     format: snippet_format.into(),
                 }),
             };
-            let (hits, elapsed) = time_block(|| engine.search_with_options(&query, search_options))?;
+            let (hits, elapsed) =
+                time_block(|| engine.search_with_options(&query, search_options))?;
             for hit in hits {
                 if let Some(snippet) = hit.snippet {
                     let escaped = snippet
