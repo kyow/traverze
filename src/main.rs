@@ -17,33 +17,45 @@ struct Cli {
 enum Commands {
     /// Index files for full-text search
     Index {
+        /// Path to the index directory
         #[arg(long, default_value = ".traverze-index")]
         index_dir: PathBuf,
+        /// Store file contents for snippet generation
         #[arg(long, default_value_t = false)]
         with_snippet: bool,
+        /// Delete and recreate the index
         #[arg(long, default_value_t = false)]
         reset: bool,
+        /// Files to index
         files: Vec<PathBuf>,
     },
     /// Remove files from the index
     Remove {
+        /// Path to the index directory
         #[arg(long, default_value = ".traverze-index")]
         index_dir: PathBuf,
+        /// Files to remove from the index
         #[arg(required = true)]
         files: Vec<PathBuf>,
     },
     /// Search the index for a query
     Search {
+        /// Path to the index directory
         #[arg(long, default_value = ".traverze-index")]
         index_dir: PathBuf,
+        /// Maximum number of results to return
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Include snippet in search results
         #[arg(long, default_value_t = false)]
         with_snippet: bool,
+        /// Maximum number of characters in snippet
         #[arg(long, default_value_t = 150)]
         snippet_max_chars: usize,
+        /// Output format for snippets
         #[arg(long, value_enum, default_value_t = SnippetFormatArg::Text)]
         snippet_format: SnippetFormatArg,
+        /// Search query string
         query: String,
     },
 }
