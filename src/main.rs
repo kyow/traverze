@@ -89,7 +89,6 @@ impl From<SnippetFormatArg> for traverze::SnippetFormat {
 enum QueryPreprocessArg {
     None,
     AnalyzeAnd,
-    AnalyzeOriginalOrAnd,
 }
 
 impl From<QueryPreprocessArg> for traverze::QueryPreprocess {
@@ -97,7 +96,6 @@ impl From<QueryPreprocessArg> for traverze::QueryPreprocess {
         match value {
             QueryPreprocessArg::None => Self::None,
             QueryPreprocessArg::AnalyzeAnd => Self::AnalyzeAnd,
-            QueryPreprocessArg::AnalyzeOriginalOrAnd => Self::AnalyzeOriginalOrAnd,
         }
     }
 }

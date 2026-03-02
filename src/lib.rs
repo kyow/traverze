@@ -59,7 +59,6 @@ pub enum QueryPreprocess {
     None,
     #[default]
     AnalyzeAnd,
-    AnalyzeOriginalOrAnd,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -337,7 +336,7 @@ impl Traverze {
 fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result<String> {
     match mode {
         QueryPreprocess::None => Ok(query.to_string()),
-        QueryPreprocess::AnalyzeAnd | QueryPreprocess::AnalyzeOriginalOrAnd => {
+        QueryPreprocess::AnalyzeAnd => {
             let mut analyzer = index
                 .tokenizers()
                 .get(TOKENIZER_NAME)
@@ -381,22 +380,12 @@ fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result
                     })
                     .collect();
                 let and_query = expanded_parts.join(" AND ");
-                if mode == QueryPreprocess::AnalyzeOriginalOrAnd {
-                    let output = format!("({query}) OR ({and_query})");
-                    eprintln!(
-                        "query_preprocess\tmode={mode:?}\tinput={query}\ttokens={}\texpanded={}\toutput={output}",
-                        terms.join("|"),
-                        expanded_parts.join("|")
-                    );
-                    Ok(output)
-                } else {
-                    eprintln!(
-                        "query_preprocess\tmode={mode:?}\tinput={query}\ttokens={}\texpanded={}\toutput={and_query}",
-                        terms.join("|"),
-                        expanded_parts.join("|")
-                    );
-                    Ok(and_query)
-                }
+                eprintln!(
+                    "query_preprocess\tmode={mode:?}\tinput={query}\ttokens={}\texpanded={}\toutput={and_query}",
+                    terms.join("|"),
+                    expanded_parts.join("|")
+                );
+                Ok(and_query)
             }
         }
     }
