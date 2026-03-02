@@ -309,9 +309,9 @@ fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result
                 }
             });
             if terms.is_empty() {
-                eprintln!(
-                    "query_preprocess\tmode={mode:?}\tinput={query}\ttokens=[]\toutput={query}"
-                );
+                // eprintln!(
+                //     "query_preprocess\tmode={mode:?}\tinput={query}\ttokens=[]\toutput={query}"
+                // );
                 Ok(query.to_string())
             } else {
                 // Build an AND query where each morphological token is expanded
@@ -340,11 +340,11 @@ fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result
                     })
                     .collect();
                 let and_query = expanded_parts.join(" AND ");
-                eprintln!(
-                    "query_preprocess\tmode={mode:?}\tinput={query}\ttokens={}\texpanded={}\toutput={and_query}",
-                    terms.join("|"),
-                    expanded_parts.join("|")
-                );
+                // eprintln!(
+                //     "query_preprocess\tmode={mode:?}\tinput={query}\ttokens={}\texpanded={}\toutput={and_query}",
+                //     terms.join("|"),
+                //     expanded_parts.join("|")
+                // );
                 Ok(and_query)
             }
         }
