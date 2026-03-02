@@ -1,4 +1,4 @@
-use std::fs;
+﻿use std::fs;
 use std::path::{Path, PathBuf};
 
 #[cfg(not(feature = "tokenizer-lindera-ipadic"))]
@@ -169,14 +169,6 @@ impl Traverze {
     }
 
     pub fn index_files(&self, files: &[PathBuf]) -> Result<usize> {
-        self.index_files_with_debug(files, None)
-    }
-
-    pub fn index_files_with_debug(
-        &self,
-        files: &[PathBuf],
-        debug_token_limit: Option<usize>,
-    ) -> Result<usize> {
         let mut writer = self
             .index
             .writer::<tantivy::schema::TantivyDocument>(50_000_000)
@@ -191,17 +183,6 @@ impl Traverze {
             let content = fs::read_to_string(&abs)
                 .or_else(|_| fs::read(&abs).map(|b| String::from_utf8_lossy(&b).into_owned()))
                 .with_context(|| format!("failed to read file: {}", abs.display()))?;
-
-            if let Some(limit) = debug_token_limit {
-                let (tokens, token_count) = self.debug_tokenize_preview(&content, limit)?;
-                eprintln!(
-                    "index_tokenize\tpath={}\ttoken_count={}\tpreview_limit={}\ttokens={}",
-                    abs.display(),
-                    token_count,
-                    limit,
-                    tokens.join("|")
-                );
-            }
 
             let path_text = abs.to_string_lossy().to_string();
             writer.delete_term(Term::from_field_text(self.path_field, &path_text));
@@ -309,27 +290,6 @@ impl Traverze {
 
     pub fn supports_snippet(&self) -> bool {
         self.contents_is_stored
-    }
-
-    fn debug_tokenize_preview(&self, text: &str, limit: usize) -> Result<(Vec<String>, usize)> {
-        let mut analyzer = self
-            .index
-            .tokenizers()
-            .get(TOKENIZER_NAME)
-            .ok_or_else(|| anyhow!("`{TOKENIZER_NAME}` tokenizer is not registered"))?;
-        let mut stream = analyzer.token_stream(text);
-        let mut tokens = Vec::new();
-        let mut token_count = 0usize;
-        stream.process(&mut |token| {
-            token_count += 1;
-            if token.text.is_empty() {
-                return;
-            }
-            if tokens.len() < limit {
-                tokens.push(token.text.to_string());
-            }
-        });
-        Ok((tokens, token_count))
     }
 }
 

@@ -27,12 +27,6 @@ enum Commands {
         /// Delete and recreate the index
         #[arg(long, default_value_t = false)]
         reset: bool,
-        /// Print tokenization preview while indexing (index-side)
-        #[arg(long, default_value_t = false)]
-        debug_index_tokens: bool,
-        /// Max number of tokens to print per file when --debug-index-tokens is enabled
-        #[arg(long, default_value_t = 80)]
-        debug_index_token_limit: usize,
         /// Files to index
         files: Vec<PathBuf>,
     },
@@ -108,8 +102,6 @@ fn main() -> Result<()> {
             index_dir,
             with_snippet,
             reset,
-            debug_index_tokens,
-            debug_index_token_limit,
             files,
         } => {
             if reset && files.is_empty() {
@@ -138,8 +130,7 @@ fn main() -> Result<()> {
                 }
                 Err(err) => return Err(err),
             };
-            let debug_limit = debug_index_tokens.then_some(debug_index_token_limit);
-            let (indexed, elapsed) = time_block(|| engine.index_files_with_debug(&files, debug_limit))?;
+            let (indexed, elapsed) = time_block(|| engine.index_files(&files))?;
             println!("indexed {} file(s)", indexed);
             eprintln!("index_time_ms\t{:.3}", elapsed_ms(elapsed));
         }
