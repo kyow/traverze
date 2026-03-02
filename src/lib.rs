@@ -236,9 +236,13 @@ impl Traverze {
 
         let query_parser = QueryParser::for_index(&self.index, vec![self.contents_field]);
         let processed_query = preprocess_query(&self.index, query, options.query_preprocess)?;
-        let parsed_query = query_parser
-            .parse_query(&processed_query)
-            .context("failed to parse query")?;
+        let (parsed_query, parse_errors) = query_parser.parse_query_lenient(&processed_query);
+        if !parse_errors.is_empty() {
+            eprintln!(
+                "warning: query parse errors (ignored): {:?}",
+                parse_errors
+            );
+        }
 
         let top_docs = searcher
             .search(&parsed_query, &TopDocs::with_limit(options.limit))
@@ -334,6 +338,8 @@ fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result
                                 .collect::<Vec<_>>()
                                 .join(" ");
                             format!("({term} OR \"{char_phrase}\")")
+                        } else if is_tantivy_keyword(term) {
+                            format!("\"{}\"" , term)
                         } else {
                             term.clone()
                         }
@@ -349,6 +355,15 @@ fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result
             }
         }
     }
+}
+
+/// Returns `true` if the given string is a Tantivy query syntax reserved keyword.
+/// These must be quoted when used as literal search terms.
+fn is_tantivy_keyword(s: &str) -> bool {
+    matches!(
+        s.to_uppercase().as_str(),
+        "AND" | "OR" | "NOT" | "IN" | "TO"
+    )
 }
 
 /// Returns `true` for CJK ideographs, Hiragana, and Katakana characters
