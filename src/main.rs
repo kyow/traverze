@@ -27,6 +27,12 @@ enum Commands {
         /// Delete and recreate the index
         #[arg(long, default_value_t = false)]
         reset: bool,
+        /// Print tokenization preview while indexing (index-side)
+        #[arg(long, default_value_t = false)]
+        debug_index_tokens: bool,
+        /// Max number of tokens to print per file when --debug-index-tokens is enabled
+        #[arg(long, default_value_t = 80)]
+        debug_index_token_limit: usize,
         /// Files to index
         files: Vec<PathBuf>,
     },
@@ -56,6 +62,9 @@ enum Commands {
         /// Output format for snippets
         #[arg(long, value_enum, default_value_t = SnippetFormatArg::Text)]
         snippet_format: SnippetFormatArg,
+        /// Query preprocessing mode
+        #[arg(long, value_enum, default_value_t = QueryPreprocessArg::AnalyzeAnd)]
+        query_preprocess: QueryPreprocessArg,
         /// Search query string
         query: String,
     },
@@ -76,6 +85,23 @@ impl From<SnippetFormatArg> for traverze::SnippetFormat {
     }
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum QueryPreprocessArg {
+    None,
+    AnalyzeAnd,
+    AnalyzeOriginalOrAnd,
+}
+
+impl From<QueryPreprocessArg> for traverze::QueryPreprocess {
+    fn from(value: QueryPreprocessArg) -> Self {
+        match value {
+            QueryPreprocessArg::None => Self::None,
+            QueryPreprocessArg::AnalyzeAnd => Self::AnalyzeAnd,
+            QueryPreprocessArg::AnalyzeOriginalOrAnd => Self::AnalyzeOriginalOrAnd,
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -84,6 +110,8 @@ fn main() -> Result<()> {
             index_dir,
             with_snippet,
             reset,
+            debug_index_tokens,
+            debug_index_token_limit,
             files,
         } => {
             if reset && files.is_empty() {
@@ -112,7 +140,8 @@ fn main() -> Result<()> {
                 }
                 Err(err) => return Err(err),
             };
-            let (indexed, elapsed) = time_block(|| engine.index_files(&files))?;
+            let debug_limit = debug_index_tokens.then_some(debug_index_token_limit);
+            let (indexed, elapsed) = time_block(|| engine.index_files_with_debug(&files, debug_limit))?;
             println!("indexed {} file(s)", indexed);
             eprintln!("index_time_ms\t{:.3}", elapsed_ms(elapsed));
         }
@@ -128,6 +157,7 @@ fn main() -> Result<()> {
             with_snippet,
             snippet_max_chars,
             snippet_format,
+            query_preprocess,
             query,
         } => {
             let engine = traverze::Traverze::new_in_dir(&index_dir)?;
@@ -144,6 +174,7 @@ fn main() -> Result<()> {
                     max_num_chars: snippet_max_chars,
                     format: snippet_format.into(),
                 }),
+                query_preprocess: query_preprocess.into(),
             };
             let (hits, elapsed) =
                 time_block(|| engine.search_with_options(&query, search_options))?;
