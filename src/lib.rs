@@ -1,4 +1,4 @@
-use std::fs;
+﻿use std::fs;
 use std::path::{Path, PathBuf};
 
 #[cfg(not(feature = "tokenizer-lindera-ipadic"))]
@@ -18,7 +18,7 @@ use tantivy::schema::{
     Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
 use tantivy::snippet::SnippetGenerator;
-use tantivy::tokenizer::{LowerCaser, NgramTokenizer, RemoveLongFilter, TextAnalyzer};
+use tantivy::tokenizer::{LowerCaser, NgramTokenizer, RemoveLongFilter, TextAnalyzer, TokenStream};
 use tantivy::{Index, ReloadPolicy, Term, doc};
 
 const TOKENIZER_NAME: &str = "traverze_ja";
@@ -54,6 +54,13 @@ pub enum SnippetFormat {
     Html,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QueryPreprocess {
+    None,
+    #[default]
+    AnalyzeAnd,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SnippetOptions {
     pub max_num_chars: usize,
@@ -73,6 +80,7 @@ impl Default for SnippetOptions {
 pub struct SearchOptions {
     pub limit: usize,
     pub snippet: Option<SnippetOptions>,
+    pub query_preprocess: QueryPreprocess,
 }
 
 impl SearchOptions {
@@ -80,6 +88,7 @@ impl SearchOptions {
         Self {
             limit,
             snippet: None,
+            query_preprocess: QueryPreprocess::default(),
         }
     }
 }
@@ -226,9 +235,14 @@ impl Traverze {
         let searcher = reader.searcher();
 
         let query_parser = QueryParser::for_index(&self.index, vec![self.contents_field]);
-        let parsed_query = query_parser
-            .parse_query(query)
-            .context("failed to parse query")?;
+        let processed_query = preprocess_query(&self.index, query, options.query_preprocess)?;
+        let (parsed_query, parse_errors) = query_parser.parse_query_lenient(&processed_query);
+        if !parse_errors.is_empty() {
+            eprintln!(
+                "warning: query parse errors (ignored): {:?}",
+                parse_errors
+            );
+        }
 
         let top_docs = searcher
             .search(&parsed_query, &TopDocs::with_limit(options.limit))
@@ -281,6 +295,88 @@ impl Traverze {
     pub fn supports_snippet(&self) -> bool {
         self.contents_is_stored
     }
+}
+
+fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result<String> {
+    match mode {
+        QueryPreprocess::None => Ok(query.to_string()),
+        QueryPreprocess::AnalyzeAnd => {
+            let mut analyzer = index
+                .tokenizers()
+                .get(TOKENIZER_NAME)
+                .ok_or_else(|| anyhow!("`{TOKENIZER_NAME}` tokenizer is not registered"))?;
+            let mut stream = analyzer.token_stream(query);
+            let mut terms = Vec::new();
+            stream.process(&mut |token| {
+                if !token.text.is_empty() {
+                    terms.push(token.text.to_string());
+                }
+            });
+            if terms.is_empty() {
+                // eprintln!(
+                //     "query_preprocess\tmode={mode:?}\tinput={query}\ttokens=[]\toutput={query}"
+                // );
+                Ok(query.to_string())
+            } else {
+                // Build an AND query where each morphological token is expanded
+                // with a character-level phrase fallback.  This handles the case
+                // where the index tokenizer splits a word differently from the
+                // query tokenizer due to context-dependent morphological analysis.
+                //
+                // For a CJK token with >1 char (e.g. "日付") we emit:
+                //   (日付 OR "日 付")
+                // The phrase query "日 付" matches when the index has the
+                // individual characters as adjacent tokens.
+                let expanded_parts: Vec<String> = terms
+                    .iter()
+                    .map(|term| {
+                        let chars: Vec<char> = term.chars().collect();
+                        if chars.len() > 1 && chars.iter().all(|c| is_cjk_like(*c)) {
+                            let char_phrase = chars
+                                .iter()
+                                .map(|c| c.to_string())
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            format!("({term} OR \"{char_phrase}\")")
+                        } else if is_tantivy_keyword(term) {
+                            format!("\"{}\"" , term)
+                        } else {
+                            term.clone()
+                        }
+                    })
+                    .collect();
+                let and_query = expanded_parts.join(" AND ");
+                // eprintln!(
+                //     "query_preprocess\tmode={mode:?}\tinput={query}\ttokens={}\texpanded={}\toutput={and_query}",
+                //     terms.join("|"),
+                //     expanded_parts.join("|")
+                // );
+                Ok(and_query)
+            }
+        }
+    }
+}
+
+/// Returns `true` if the given string is a Tantivy query syntax reserved keyword.
+/// These must be quoted when used as literal search terms.
+fn is_tantivy_keyword(s: &str) -> bool {
+    matches!(
+        s.to_uppercase().as_str(),
+        "AND" | "OR" | "NOT" | "IN" | "TO"
+    )
+}
+
+/// Returns `true` for CJK ideographs, Hiragana, and Katakana characters
+/// that are likely to appear as individual tokens in a morphological index.
+fn is_cjk_like(c: char) -> bool {
+    matches!(c,
+        '\u{3040}'..='\u{309F}'   // Hiragana
+        | '\u{30A0}'..='\u{30FF}' // Katakana
+        | '\u{4E00}'..='\u{9FFF}' // CJK Unified Ideographs
+        | '\u{3400}'..='\u{4DBF}' // CJK Extension A
+        | '\u{F900}'..='\u{FAFF}' // CJK Compatibility Ideographs
+        | '\u{FF65}'..='\u{FF9F}' // Halfwidth Katakana
+    )
 }
 
 fn normalize_path(path: &Path) -> PathBuf {

@@ -56,6 +56,9 @@ enum Commands {
         /// Output format for snippets
         #[arg(long, value_enum, default_value_t = SnippetFormatArg::Text)]
         snippet_format: SnippetFormatArg,
+        /// Query preprocessing mode
+        #[arg(long, value_enum, default_value_t = QueryPreprocessArg::AnalyzeAnd)]
+        query_preprocess: QueryPreprocessArg,
         /// Search query string
         query: String,
     },
@@ -72,6 +75,21 @@ impl From<SnippetFormatArg> for traverze::SnippetFormat {
         match value {
             SnippetFormatArg::Text => Self::Text,
             SnippetFormatArg::Html => Self::Html,
+        }
+    }
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum QueryPreprocessArg {
+    None,
+    AnalyzeAnd,
+}
+
+impl From<QueryPreprocessArg> for traverze::QueryPreprocess {
+    fn from(value: QueryPreprocessArg) -> Self {
+        match value {
+            QueryPreprocessArg::None => Self::None,
+            QueryPreprocessArg::AnalyzeAnd => Self::AnalyzeAnd,
         }
     }
 }
@@ -128,6 +146,7 @@ fn main() -> Result<()> {
             with_snippet,
             snippet_max_chars,
             snippet_format,
+            query_preprocess,
             query,
         } => {
             let engine = traverze::Traverze::new_in_dir(&index_dir)?;
@@ -144,6 +163,7 @@ fn main() -> Result<()> {
                     max_num_chars: snippet_max_chars,
                     format: snippet_format.into(),
                 }),
+                query_preprocess: query_preprocess.into(),
             };
             let (hits, elapsed) =
                 time_block(|| engine.search_with_options(&query, search_options))?;
