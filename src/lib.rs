@@ -292,6 +292,41 @@ impl Traverze {
         Ok(hits)
     }
 
+    pub fn list_files(&self) -> Result<Vec<String>> {
+        let reader = self
+            .index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::OnCommitWithDelay)
+            .try_into()
+            .context("failed to build index reader")?;
+        let searcher = reader.searcher();
+
+        let mut paths = Vec::new();
+        for segment_reader in searcher.segment_readers() {
+            let store_reader = segment_reader
+                .get_store_reader(0)
+                .context("failed to open store reader")?;
+            for doc_id in 0..segment_reader.max_doc() {
+                if segment_reader.is_deleted(doc_id) {
+                    continue;
+                }
+                let doc: tantivy::schema::TantivyDocument =
+                    store_reader.get(doc_id).context("failed to load document")?;
+                if let Some(path) = doc
+                    .get_first(self.path_field)
+                    .and_then(|v| v.as_str())
+                {
+                    if !path.is_empty() {
+                        paths.push(path.to_string());
+                    }
+                }
+            }
+        }
+
+        paths.sort();
+        Ok(paths)
+    }
+
     pub fn supports_snippet(&self) -> bool {
         self.contents_is_stored
     }

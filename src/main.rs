@@ -39,6 +39,12 @@ enum Commands {
         #[arg(required = true)]
         files: Vec<PathBuf>,
     },
+    /// List all indexed files
+    List {
+        /// Path to the index directory
+        #[arg(long, default_value = ".traverze-index")]
+        index_dir: PathBuf,
+    },
     /// Search the index for a query
     Search {
         /// Path to the index directory
@@ -133,6 +139,14 @@ fn main() -> Result<()> {
             let (indexed, elapsed) = time_block(|| engine.index_files(&files))?;
             println!("indexed {} file(s)", indexed);
             eprintln!("index_time_ms\t{:.3}", elapsed_ms(elapsed));
+        }
+        Commands::List { index_dir } => {
+            let engine = traverze::Traverze::new_in_dir(&index_dir)?;
+            let (paths, elapsed) = time_block(|| engine.list_files())?;
+            for path in &paths {
+                println!("{}", path);
+            }
+            eprintln!("list_time_ms\t{:.3}\t{} file(s)", elapsed_ms(elapsed), paths.len());
         }
         Commands::Remove { index_dir, files } => {
             let engine = traverze::Traverze::new_in_dir(&index_dir)?;
