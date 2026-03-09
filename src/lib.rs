@@ -292,6 +292,41 @@ impl Traverze {
         Ok(hits)
     }
 
+    pub fn list_files(&self) -> Result<Vec<String>> {
+        let reader = self
+            .index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::OnCommitWithDelay)
+            .try_into()
+            .context("failed to build index reader")?;
+        let searcher = reader.searcher();
+
+        let mut paths = Vec::new();
+        for segment_reader in searcher.segment_readers() {
+            let store_reader = segment_reader
+                .get_store_reader(0)
+                .context("failed to open store reader")?;
+            for doc_id in 0..segment_reader.max_doc() {
+                if segment_reader.is_deleted(doc_id) {
+                    continue;
+                }
+                let doc: tantivy::schema::TantivyDocument =
+                    store_reader.get(doc_id).context("failed to load document")?;
+                if let Some(path) = doc
+                    .get_first(self.path_field)
+                    .and_then(|v| v.as_str())
+                {
+                    if !path.is_empty() {
+                        paths.push(path.to_string());
+                    }
+                }
+            }
+        }
+
+        paths.sort();
+        Ok(paths)
+    }
+
     pub fn supports_snippet(&self) -> bool {
         self.contents_is_stored
     }
@@ -453,5 +488,75 @@ mod tests {
             crate::default_tokenizer_mode(),
             crate::TokenizerMode::LinderaIpadic
         );
+    }
+
+    #[test]
+    fn list_files_empty_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine =
+            crate::Traverze::new_in_dir_with_mode(dir.path(), crate::TokenizerMode::Ngram)
+                .unwrap();
+        let files = engine.list_files().unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn list_files_returns_indexed_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let index_dir = dir.path().join("index");
+        let file_a = dir.path().join("a.txt");
+        let file_b = dir.path().join("b.txt");
+        std::fs::write(&file_a, "hello world").unwrap();
+        std::fs::write(&file_b, "foo bar").unwrap();
+
+        let engine = crate::Traverze::new_in_dir_for_indexing(
+            &index_dir,
+            crate::TokenizerMode::Ngram,
+            false,
+        )
+        .unwrap();
+        let count = engine.index_files(&[file_a.clone(), file_b.clone()]).unwrap();
+        assert_eq!(count, 2);
+
+        let files = engine.list_files().unwrap();
+        assert_eq!(files.len(), 2);
+        // list_files returns sorted paths
+        let canonical_a = std::fs::canonicalize(&file_a).unwrap().to_string_lossy().to_string();
+        let canonical_b = std::fs::canonicalize(&file_b).unwrap().to_string_lossy().to_string();
+        assert!(files.contains(&canonical_a));
+        assert!(files.contains(&canonical_b));
+    }
+
+    #[test]
+    fn list_files_excludes_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let index_dir = dir.path().join("index");
+        let file_a = dir.path().join("a.txt");
+        let file_b = dir.path().join("b.txt");
+        std::fs::write(&file_a, "hello").unwrap();
+        std::fs::write(&file_b, "world").unwrap();
+
+        {
+            let engine = crate::Traverze::new_in_dir_for_indexing(
+                &index_dir,
+                crate::TokenizerMode::Ngram,
+                false,
+            )
+            .unwrap();
+            engine.index_files(&[file_a.clone(), file_b.clone()]).unwrap();
+        }
+        {
+            let engine = crate::Traverze::new_in_dir_with_mode(
+                &index_dir,
+                crate::TokenizerMode::Ngram,
+            )
+            .unwrap();
+            engine.remove_files(&[file_a]).unwrap();
+
+            let files = engine.list_files().unwrap();
+            assert_eq!(files.len(), 1);
+            let canonical_b = std::fs::canonicalize(&file_b).unwrap().to_string_lossy().to_string();
+            assert_eq!(files[0], canonical_b);
+        }
     }
 }

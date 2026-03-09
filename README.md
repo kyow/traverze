@@ -27,6 +27,7 @@ cargo install traverze --features tokenizer-lindera-ipadic
 
 ```bash
 traverze index [--index-dir <DIR>] [--with-snippet] [--reset] [FILES...]
+traverze list [--index-dir <DIR>]
 traverze remove [--index-dir <DIR>] <FILES...>
 traverze search [--index-dir <DIR>] [--limit <N>] [--with-snippet] [--snippet-max-chars <N>] [--snippet-format text|html] [--query-preprocess none|analyze-and] <QUERY>
 ```
@@ -36,6 +37,7 @@ Notes:
 - `index --reset` without files only deletes the index directory.
 - To enable snippets, build index with `index --with-snippet`.
 - If `search --with-snippet` is used on a non-snippet index, recreate with `index --reset --with-snippet`.
+- `list` outputs one indexed file path per line.
 
 ## Library Usage
 
@@ -110,6 +112,22 @@ fn main() -> anyhow::Result<()> {
 > **Note:** Snippet search requires the index to be built with `--with-snippet` (CLI) or
 > `Traverze::new_in_dir_for_indexing(dir, mode, true)` (library).
 > Use `engine.supports_snippet()` to check at runtime.
+
+### List indexed files
+
+```rust
+use traverze::Traverze;
+
+fn main() -> anyhow::Result<()> {
+    let engine = Traverze::new()?;
+    let paths = engine.list_files()?;
+    for path in &paths {
+        println!("{}", path);
+    }
+    println!("{} file(s)", paths.len());
+    Ok(())
+}
+```
 
 ### Remove files from the index
 
