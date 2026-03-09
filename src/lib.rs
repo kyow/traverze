@@ -489,4 +489,74 @@ mod tests {
             crate::TokenizerMode::LinderaIpadic
         );
     }
+
+    #[test]
+    fn list_files_empty_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine =
+            crate::Traverze::new_in_dir_with_mode(dir.path(), crate::TokenizerMode::Ngram)
+                .unwrap();
+        let files = engine.list_files().unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn list_files_returns_indexed_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let index_dir = dir.path().join("index");
+        let file_a = dir.path().join("a.txt");
+        let file_b = dir.path().join("b.txt");
+        std::fs::write(&file_a, "hello world").unwrap();
+        std::fs::write(&file_b, "foo bar").unwrap();
+
+        let engine = crate::Traverze::new_in_dir_for_indexing(
+            &index_dir,
+            crate::TokenizerMode::Ngram,
+            false,
+        )
+        .unwrap();
+        let count = engine.index_files(&[file_a.clone(), file_b.clone()]).unwrap();
+        assert_eq!(count, 2);
+
+        let files = engine.list_files().unwrap();
+        assert_eq!(files.len(), 2);
+        // list_files returns sorted paths
+        let canonical_a = std::fs::canonicalize(&file_a).unwrap().to_string_lossy().to_string();
+        let canonical_b = std::fs::canonicalize(&file_b).unwrap().to_string_lossy().to_string();
+        assert!(files.contains(&canonical_a));
+        assert!(files.contains(&canonical_b));
+    }
+
+    #[test]
+    fn list_files_excludes_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let index_dir = dir.path().join("index");
+        let file_a = dir.path().join("a.txt");
+        let file_b = dir.path().join("b.txt");
+        std::fs::write(&file_a, "hello").unwrap();
+        std::fs::write(&file_b, "world").unwrap();
+
+        {
+            let engine = crate::Traverze::new_in_dir_for_indexing(
+                &index_dir,
+                crate::TokenizerMode::Ngram,
+                false,
+            )
+            .unwrap();
+            engine.index_files(&[file_a.clone(), file_b.clone()]).unwrap();
+        }
+        {
+            let engine = crate::Traverze::new_in_dir_with_mode(
+                &index_dir,
+                crate::TokenizerMode::Ngram,
+            )
+            .unwrap();
+            engine.remove_files(&[file_a]).unwrap();
+
+            let files = engine.list_files().unwrap();
+            assert_eq!(files.len(), 1);
+            let canonical_b = std::fs::canonicalize(&file_b).unwrap().to_string_lossy().to_string();
+            assert_eq!(files[0], canonical_b);
+        }
+    }
 }
