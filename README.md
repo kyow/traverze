@@ -4,8 +4,8 @@ A utility library and CLI for full-text search built on Tantivy and Lindera.
 
 ## Features
 
-- `tokenizer-ngram` (default)
-- `tokenizer-lindera-ipadic` (optional)
+- `tokenizer-ngram` (default) — Character-based 2–3 gram tokenizer. Works with all languages including CJK. Lightweight with no additional dictionary data.
+- `tokenizer-lindera-ipadic` (optional) — Japanese morphological analyzer using the IPADIC dictionary. Produces more accurate tokens for Japanese text but increases binary size (~50 MB).
 
 ## Requirements
 
@@ -38,6 +38,21 @@ Notes:
 - To enable snippets, build index with `index --with-snippet`.
 - If `search --with-snippet` is used on a non-snippet index, recreate with `index --reset --with-snippet`.
 - `list` outputs one indexed file path per line.
+- `--query-preprocess` controls how the query is tokenized before searching:
+  - `none` — pass the query string directly to Tantivy's query parser.
+  - `analyze-and` (default) — tokenize the query with the index's analyzer, combine tokens with AND. CJK substrings are wrapped as phrase queries to preserve word boundaries. Tantivy reserved keywords (`AND`, `OR`, `NOT`, etc.) are automatically quoted.
+
+### Search output format
+
+Results are printed as tab-separated values to stdout (one hit per line):
+
+```
+<score>\t<path>                   # without --with-snippet
+<score>\t<path>\t<snippet>        # with --with-snippet
+```
+
+Newlines, tabs, and carriage returns in snippets are escaped as `\n`, `\t`, `\r`.
+Timing information is printed to stderr.
 
 ## Library Usage
 
