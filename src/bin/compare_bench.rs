@@ -95,7 +95,7 @@ fn run_mode(base_dir: &Path, files: &[PathBuf], mode: TokenizerMode, label: &str
     let engine = Traverze::new_in_dir_with_mode(&index_dir, mode)?;
 
     let start = Instant::now();
-    let indexed = engine.index_files(files)?;
+    let indexed = engine.index(files)?;
     let index_elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
     if indexed != files.len() {
         bail!(

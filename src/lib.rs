@@ -168,7 +168,7 @@ impl Traverze {
         })
     }
 
-    pub fn index_files(&self, files: &[PathBuf]) -> Result<usize> {
+    pub fn index(&self, files: &[PathBuf]) -> Result<usize> {
         let mut writer = self
             .index
             .writer::<tantivy::schema::TantivyDocument>(50_000_000)
@@ -199,7 +199,7 @@ impl Traverze {
         Ok(count)
     }
 
-    pub fn remove_files(&self, files: &[PathBuf]) -> Result<usize> {
+    pub fn remove(&self, files: &[PathBuf]) -> Result<usize> {
         let mut writer = self
             .index
             .writer::<tantivy::schema::TantivyDocument>(50_000_000)
@@ -292,7 +292,7 @@ impl Traverze {
         Ok(hits)
     }
 
-    pub fn list_files(&self) -> Result<Vec<String>> {
+    pub fn list(&self) -> Result<Vec<String>> {
         let reader = self
             .index
             .reader_builder()
@@ -496,7 +496,7 @@ mod tests {
         let engine =
             crate::Traverze::new_in_dir_with_mode(dir.path(), crate::TokenizerMode::Ngram)
                 .unwrap();
-        let files = engine.list_files().unwrap();
+        let files = engine.list().unwrap();
         assert!(files.is_empty());
     }
 
@@ -515,12 +515,12 @@ mod tests {
             false,
         )
         .unwrap();
-        let count = engine.index_files(&[file_a.clone(), file_b.clone()]).unwrap();
+        let count = engine.index(&[file_a.clone(), file_b.clone()]).unwrap();
         assert_eq!(count, 2);
 
-        let files = engine.list_files().unwrap();
+        let files = engine.list().unwrap();
         assert_eq!(files.len(), 2);
-        // list_files returns sorted paths
+        // list returns sorted paths
         let canonical_a = std::fs::canonicalize(&file_a).unwrap().to_string_lossy().to_string();
         let canonical_b = std::fs::canonicalize(&file_b).unwrap().to_string_lossy().to_string();
         assert!(files.contains(&canonical_a));
@@ -543,7 +543,7 @@ mod tests {
                 false,
             )
             .unwrap();
-            engine.index_files(&[file_a.clone(), file_b.clone()]).unwrap();
+            engine.index(&[file_a.clone(), file_b.clone()]).unwrap();
         }
         {
             let engine = crate::Traverze::new_in_dir_with_mode(
@@ -551,9 +551,9 @@ mod tests {
                 crate::TokenizerMode::Ngram,
             )
             .unwrap();
-            engine.remove_files(&[file_a]).unwrap();
+            engine.remove(&[file_a]).unwrap();
 
-            let files = engine.list_files().unwrap();
+            let files = engine.list().unwrap();
             assert_eq!(files.len(), 1);
             let canonical_b = std::fs::canonicalize(&file_b).unwrap().to_string_lossy().to_string();
             assert_eq!(files[0], canonical_b);

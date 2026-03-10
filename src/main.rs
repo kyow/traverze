@@ -136,13 +136,13 @@ fn main() -> Result<()> {
                 }
                 Err(err) => return Err(err),
             };
-            let (indexed, elapsed) = time_block(|| engine.index_files(&files))?;
+            let (indexed, elapsed) = time_block(|| engine.index(&files))?;
             println!("indexed {} file(s)", indexed);
             eprintln!("index_time_ms\t{:.3}", elapsed_ms(elapsed));
         }
         Commands::List { index_dir } => {
             let engine = traverze::Traverze::new_in_dir(&index_dir)?;
-            let (paths, elapsed) = time_block(|| engine.list_files())?;
+            let (paths, elapsed) = time_block(|| engine.list())?;
             for path in &paths {
                 println!("{}", path);
             }
@@ -150,7 +150,7 @@ fn main() -> Result<()> {
         }
         Commands::Remove { index_dir, files } => {
             let engine = traverze::Traverze::new_in_dir(&index_dir)?;
-            let (removed, elapsed) = time_block(|| engine.remove_files(&files))?;
+            let (removed, elapsed) = time_block(|| engine.remove(&files))?;
             println!("removed {} file(s)", removed);
             eprintln!("remove_time_ms\t{:.3}", elapsed_ms(elapsed));
         }
