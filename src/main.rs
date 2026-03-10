@@ -120,11 +120,10 @@ fn main() -> Result<()> {
             if reset && index_dir.exists() {
                 fs::remove_dir_all(&index_dir)?;
             }
-            let engine_result = traverze::Traverze::new_in_dir_for_indexing(
-                &index_dir,
-                traverze::default_tokenizer_mode(),
-                with_snippet,
-            );
+            let engine_result = traverze::Traverze::builder()
+                .index_dir(&index_dir)
+                .with_snippet(with_snippet)
+                .open();
             let engine = match engine_result {
                 Ok(engine) => engine,
                 Err(err) if err.to_string().contains("index snippet support mismatch") => {
@@ -141,7 +140,7 @@ fn main() -> Result<()> {
             eprintln!("index_time_ms\t{:.3}", elapsed_ms(elapsed));
         }
         Commands::List { index_dir } => {
-            let engine = traverze::Traverze::new_in_dir(&index_dir)?;
+            let engine = traverze::Traverze::builder().index_dir(&index_dir).open()?;
             let (paths, elapsed) = time_block(|| engine.list())?;
             for path in &paths {
                 println!("{}", path);
@@ -149,7 +148,7 @@ fn main() -> Result<()> {
             eprintln!("list_time_ms\t{:.3}\t{} file(s)", elapsed_ms(elapsed), paths.len());
         }
         Commands::Remove { index_dir, files } => {
-            let engine = traverze::Traverze::new_in_dir(&index_dir)?;
+            let engine = traverze::Traverze::builder().index_dir(&index_dir).open()?;
             let (removed, elapsed) = time_block(|| engine.remove(&files))?;
             println!("removed {} file(s)", removed);
             eprintln!("remove_time_ms\t{:.3}", elapsed_ms(elapsed));
@@ -163,7 +162,7 @@ fn main() -> Result<()> {
             query_preprocess,
             query,
         } => {
-            let engine = traverze::Traverze::new_in_dir(&index_dir)?;
+            let engine = traverze::Traverze::builder().index_dir(&index_dir).open()?;
             if with_snippet && !engine.supports_snippet() {
                 return Err(anyhow!(
                     "this index does not support snippet. run `traverze index --index-dir {} --reset` and then `traverze index --index-dir {} --with-snippet <FILES...>`",

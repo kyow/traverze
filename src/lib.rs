@@ -107,37 +107,54 @@ pub struct Traverze {
     contents_is_stored: bool,
 }
 
-impl Traverze {
-    pub fn new() -> Result<Self> {
-        Self::new_in_dir(Path::new(DEFAULT_INDEX_DIR))
+pub struct TraverzeBuilder {
+    index_dir: PathBuf,
+    mode: TokenizerMode,
+    with_snippet: bool,
+}
+
+impl TraverzeBuilder {
+    pub fn index_dir(mut self, dir: &Path) -> Self {
+        self.index_dir = dir.to_path_buf();
+        self
     }
 
-    pub fn new_in_dir(index_dir: &Path) -> Result<Self> {
-        Self::new_in_dir_with_mode(index_dir, default_tokenizer_mode())
+    pub fn mode(mut self, mode: TokenizerMode) -> Self {
+        self.mode = mode;
+        self
     }
 
-    pub fn new_in_dir_with_mode(index_dir: &Path, mode: TokenizerMode) -> Result<Self> {
-        Self::open_or_create(index_dir, mode, build_schema(false))
+    pub fn with_snippet(mut self, enabled: bool) -> Self {
+        self.with_snippet = enabled;
+        self
     }
 
-    pub fn new_in_dir_for_indexing(
-        index_dir: &Path,
-        mode: TokenizerMode,
-        with_snippet: bool,
-    ) -> Result<Self> {
-        let engine = Self::open_or_create(index_dir, mode, build_schema(with_snippet))?;
-        if engine.supports_snippet() != with_snippet {
-            let expected = if with_snippet { "enabled" } else { "disabled" };
-            let actual = if engine.supports_snippet() {
-                "enabled"
-            } else {
-                "disabled"
-            };
+    pub fn open(self) -> Result<Traverze> {
+        let engine = Traverze::open_or_create(
+            &self.index_dir,
+            self.mode,
+            build_schema(self.with_snippet),
+        )?;
+        if self.with_snippet && !engine.supports_snippet() {
             return Err(anyhow!(
-                "index snippet support mismatch: expected {expected}, but existing index is {actual}"
+                "index snippet support mismatch: expected enabled, but existing index is disabled"
             ));
         }
         Ok(engine)
+    }
+}
+
+impl Traverze {
+    pub fn new() -> Result<Self> {
+        Self::builder().open()
+    }
+
+    pub fn builder() -> TraverzeBuilder {
+        TraverzeBuilder {
+            index_dir: PathBuf::from(DEFAULT_INDEX_DIR),
+            mode: default_tokenizer_mode(),
+            with_snippet: false,
+        }
     }
 
     fn open_or_create(index_dir: &Path, mode: TokenizerMode, schema: Schema) -> Result<Self> {
@@ -485,9 +502,11 @@ mod tests {
     #[test]
     fn list_files_empty_index() {
         let dir = tempfile::tempdir().unwrap();
-        let engine =
-            crate::Traverze::new_in_dir_with_mode(dir.path(), crate::TokenizerMode::Ngram)
-                .unwrap();
+        let engine = crate::Traverze::builder()
+            .index_dir(dir.path())
+            .mode(crate::TokenizerMode::Ngram)
+            .open()
+            .unwrap();
         let files = engine.list().unwrap();
         assert!(files.is_empty());
     }
@@ -501,12 +520,11 @@ mod tests {
         std::fs::write(&file_a, "hello world").unwrap();
         std::fs::write(&file_b, "foo bar").unwrap();
 
-        let engine = crate::Traverze::new_in_dir_for_indexing(
-            &index_dir,
-            crate::TokenizerMode::Ngram,
-            false,
-        )
-        .unwrap();
+        let engine = crate::Traverze::builder()
+            .index_dir(&index_dir)
+            .mode(crate::TokenizerMode::Ngram)
+            .open()
+            .unwrap();
         let count = engine.index(&[file_a.clone(), file_b.clone()]).unwrap();
         assert_eq!(count, 2);
 
@@ -529,20 +547,19 @@ mod tests {
         std::fs::write(&file_b, "world").unwrap();
 
         {
-            let engine = crate::Traverze::new_in_dir_for_indexing(
-                &index_dir,
-                crate::TokenizerMode::Ngram,
-                false,
-            )
-            .unwrap();
+            let engine = crate::Traverze::builder()
+                .index_dir(&index_dir)
+                .mode(crate::TokenizerMode::Ngram)
+                .open()
+                .unwrap();
             engine.index(&[file_a.clone(), file_b.clone()]).unwrap();
         }
         {
-            let engine = crate::Traverze::new_in_dir_with_mode(
-                &index_dir,
-                crate::TokenizerMode::Ngram,
-            )
-            .unwrap();
+            let engine = crate::Traverze::builder()
+                .index_dir(&index_dir)
+                .mode(crate::TokenizerMode::Ngram)
+                .open()
+                .unwrap();
             engine.remove(&[file_a]).unwrap();
 
             let files = engine.list().unwrap();

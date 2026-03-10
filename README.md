@@ -62,8 +62,7 @@ use std::path::PathBuf;
 use traverze::{SearchOptions, Traverze};
 
 fn main() -> anyhow::Result<()> {
-    let index_dir = PathBuf::from("./.traverze-index");
-    let engine = Traverze::new_in_dir(&index_dir)?;
+    let engine = Traverze::new()?;
 
     let files = vec![
         PathBuf::from("README.md"),
@@ -110,7 +109,7 @@ fn main() -> anyhow::Result<()> {
 ```
 
 > **Note:** Snippet search requires the index to be built with `--with-snippet` (CLI) or
-> `Traverze::new_in_dir_for_indexing(dir, mode, true)` (library).
+> `Traverze::builder().with_snippet(true).open()` (library).
 > Use `engine.supports_snippet()` to check at runtime.
 
 ### List indexed files
@@ -146,15 +145,13 @@ fn main() -> anyhow::Result<()> {
 ### Select tokenizer mode explicitly
 
 ```rust
-use std::path::Path;
 use traverze::{TokenizerMode, Traverze};
 
 fn main() -> anyhow::Result<()> {
     // Use Lindera IPADIC tokenizer (requires `tokenizer-lindera-ipadic` feature)
-    let engine = Traverze::new_in_dir_with_mode(
-        Path::new(".traverze-index"),
-        TokenizerMode::LinderaIpadic,
-    )?;
+    let engine = Traverze::builder()
+        .mode(TokenizerMode::LinderaIpadic)
+        .open()?;
     // ...
     Ok(())
 }
