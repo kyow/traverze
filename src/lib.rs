@@ -56,9 +56,9 @@ pub enum SnippetFormat {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QueryPreprocess {
-    None,
+    Plain,
     #[default]
-    AnalyzeAnd,
+    Auto,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -343,8 +343,8 @@ impl Traverze {
 
 fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result<String> {
     match mode {
-        QueryPreprocess::None => Ok(query.to_string()),
-        QueryPreprocess::AnalyzeAnd => {
+        QueryPreprocess::Plain => Ok(query.to_string()),
+        QueryPreprocess::Auto => {
             let mut analyzer = index
                 .tokenizers()
                 .get(TOKENIZER_NAME)

@@ -63,7 +63,7 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = SnippetFormatArg::Text)]
         snippet_format: SnippetFormatArg,
         /// Query preprocessing mode
-        #[arg(long, value_enum, default_value_t = QueryPreprocessArg::AnalyzeAnd)]
+        #[arg(long, value_enum, default_value_t = QueryPreprocessArg::Auto)]
         query_preprocess: QueryPreprocessArg,
         /// Search query string
         query: String,
@@ -87,15 +87,15 @@ impl From<SnippetFormatArg> for traverze::SnippetFormat {
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
 enum QueryPreprocessArg {
-    None,
-    AnalyzeAnd,
+    Plain,
+    Auto,
 }
 
 impl From<QueryPreprocessArg> for traverze::QueryPreprocess {
     fn from(value: QueryPreprocessArg) -> Self {
         match value {
-            QueryPreprocessArg::None => Self::None,
-            QueryPreprocessArg::AnalyzeAnd => Self::AnalyzeAnd,
+            QueryPreprocessArg::Plain => Self::Plain,
+            QueryPreprocessArg::Auto => Self::Auto,
         }
     }
 }
