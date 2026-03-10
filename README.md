@@ -59,7 +59,7 @@ traverze = { version = "0.2", features = ["tokenizer-lindera-ipadic"] }
 
 ```rust
 use std::path::PathBuf;
-use traverze::Traverze;
+use traverze::{SearchOptions, Traverze};
 
 fn main() -> anyhow::Result<()> {
     let index_dir = PathBuf::from("./.traverze-index");
@@ -71,7 +71,7 @@ fn main() -> anyhow::Result<()> {
     ];
     engine.index(&files)?;
 
-    let hits = engine.search("tantivy", 10)?;
+    let hits = engine.search("tantivy", SearchOptions::with_limit(10))?;
     for hit in hits {
         println!("{} ({:.3})", hit.path, hit.score);
     }
@@ -97,7 +97,7 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let hits = engine.search_with_options("tantivy", options)?;
+    let hits = engine.search("tantivy", options)?;
     for hit in hits {
         println!("{} ({:.3})", hit.path, hit.score);
         if let Some(snippet) = &hit.snippet {

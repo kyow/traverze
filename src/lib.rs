@@ -217,15 +217,7 @@ impl Traverze {
         Ok(count)
     }
 
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
-        self.search_with_options(query, SearchOptions::with_limit(limit))
-    }
-
-    pub fn search_with_options(
-        &self,
-        query: &str,
-        options: SearchOptions,
-    ) -> Result<Vec<SearchHit>> {
+    pub fn search(&self, query: &str, options: SearchOptions) -> Result<Vec<SearchHit>> {
         let reader = self
             .index
             .reader_builder()

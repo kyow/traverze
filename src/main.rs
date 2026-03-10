@@ -180,7 +180,7 @@ fn main() -> Result<()> {
                 query_preprocess: query_preprocess.into(),
             };
             let (hits, elapsed) =
-                time_block(|| engine.search_with_options(&query, search_options))?;
+                time_block(|| engine.search(&query, search_options))?;
             for hit in hits {
                 if let Some(snippet) = hit.snippet {
                     let escaped = snippet
