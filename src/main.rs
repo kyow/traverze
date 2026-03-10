@@ -19,7 +19,7 @@ enum Commands {
     /// Index files for full-text search
     Index {
         /// Path to the index directory
-        #[arg(long, default_value = ".traverze-index")]
+        #[arg(long, default_value = traverze::DEFAULT_INDEX_DIR)]
         index_dir: PathBuf,
         /// Store file contents for snippet generation
         #[arg(long, default_value_t = false)]
@@ -33,7 +33,7 @@ enum Commands {
     /// Remove files from the index
     Remove {
         /// Path to the index directory
-        #[arg(long, default_value = ".traverze-index")]
+        #[arg(long, default_value = traverze::DEFAULT_INDEX_DIR)]
         index_dir: PathBuf,
         /// Files to remove from the index
         #[arg(required = true)]
@@ -42,13 +42,13 @@ enum Commands {
     /// List all indexed files
     List {
         /// Path to the index directory
-        #[arg(long, default_value = ".traverze-index")]
+        #[arg(long, default_value = traverze::DEFAULT_INDEX_DIR)]
         index_dir: PathBuf,
     },
     /// Search the index for a query
     Search {
         /// Path to the index directory
-        #[arg(long, default_value = ".traverze-index")]
+        #[arg(long, default_value = traverze::DEFAULT_INDEX_DIR)]
         index_dir: PathBuf,
         /// Maximum number of results to return
         #[arg(long, default_value_t = 20)]

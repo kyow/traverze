@@ -22,7 +22,7 @@ use tantivy::tokenizer::{LowerCaser, NgramTokenizer, RemoveLongFilter, TextAnaly
 use tantivy::{Index, ReloadPolicy, Term, doc};
 
 const TOKENIZER_NAME: &str = "traverze_ja";
-const DEFAULT_INDEX_DIR: &str = ".traverze-index";
+pub const DEFAULT_INDEX_DIR: &str = ".traverze-index";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenizerMode {
