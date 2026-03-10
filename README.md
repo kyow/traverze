@@ -4,8 +4,8 @@ A utility library and CLI for full-text search built on Tantivy and Lindera.
 
 ## Features
 
-- `tokenizer-ngram` (default)
-- `tokenizer-lindera-ipadic` (optional)
+- `tokenizer-ngram` (default) — Character-based 2–3 gram tokenizer. Works with all languages including CJK. Lightweight with no additional dictionary data.
+- `tokenizer-lindera-ipadic` (optional) — Japanese morphological analyzer using the IPADIC dictionary. Produces more accurate tokens for Japanese text but increases binary size (~50 MB).
 
 ## Requirements
 
@@ -29,7 +29,7 @@ cargo install traverze --features tokenizer-lindera-ipadic
 traverze index [--index-dir <DIR>] [--with-snippet] [--reset] [FILES...]
 traverze list [--index-dir <DIR>]
 traverze remove [--index-dir <DIR>] <FILES...>
-traverze search [--index-dir <DIR>] [--limit <N>] [--with-snippet] [--snippet-max-chars <N>] [--snippet-format text|html] [--query-preprocess none|analyze-and] <QUERY>
+traverze search [--index-dir <DIR>] [--limit <N>] [--with-snippet] [--snippet-max-chars <N>] [--snippet-format text|html] [--query-preprocess plain|auto] <QUERY>
 ```
 
 Notes:
@@ -38,6 +38,21 @@ Notes:
 - To enable snippets, build index with `index --with-snippet`.
 - If `search --with-snippet` is used on a non-snippet index, recreate with `index --reset --with-snippet`.
 - `list` outputs one indexed file path per line.
+- `--query-preprocess` controls how the query is tokenized before searching:
+  - `plain` — pass the query string directly to Tantivy's query parser.
+  - `auto` (default) — tokenize the query with the index's analyzer, combine tokens with AND. CJK substrings are wrapped as phrase queries to preserve word boundaries. Tantivy reserved keywords (`AND`, `OR`, `NOT`, etc.) are automatically quoted.
+
+### Search output format
+
+Results are printed as tab-separated values to stdout (one hit per line):
+
+```
+<score>\t<path>                   # without --with-snippet
+<score>\t<path>\t<snippet>        # with --with-snippet
+```
+
+Newlines, tabs, and carriage returns in snippets are escaped as `\n`, `\t`, `\r`.
+Timing information is printed to stderr.
 
 ## Library Usage
 
@@ -59,19 +74,18 @@ traverze = { version = "0.2", features = ["tokenizer-lindera-ipadic"] }
 
 ```rust
 use std::path::PathBuf;
-use traverze::Traverze;
+use traverze::{SearchOptions, Traverze};
 
 fn main() -> anyhow::Result<()> {
-    let index_dir = PathBuf::from("./.traverze-index");
-    let engine = Traverze::new_in_dir(&index_dir)?;
+    let engine = Traverze::new()?;
 
     let files = vec![
         PathBuf::from("README.md"),
         PathBuf::from("src/lib.rs"),
     ];
-    engine.index_files(&files)?;
+    engine.index(&files)?;
 
-    let hits = engine.search("tantivy", 10)?;
+    let hits = engine.search("tantivy", SearchOptions::with_limit(10))?;
     for hit in hits {
         println!("{} ({:.3})", hit.path, hit.score);
     }
@@ -97,7 +111,7 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let hits = engine.search_with_options("tantivy", options)?;
+    let hits = engine.search("tantivy", options)?;
     for hit in hits {
         println!("{} ({:.3})", hit.path, hit.score);
         if let Some(snippet) = &hit.snippet {
@@ -110,8 +124,8 @@ fn main() -> anyhow::Result<()> {
 ```
 
 > **Note:** Snippet search requires the index to be built with `--with-snippet` (CLI) or
-> `Traverze::new_in_dir_for_indexing(dir, mode, true)` (library).
-> Use `engine.supports_snippet()` to check at runtime.
+> `Traverze::builder().with_snippet(true).open()` (library).
+> Use `engine.has_snippet()` to check at runtime.
 
 ### List indexed files
 
@@ -120,7 +134,7 @@ use traverze::Traverze;
 
 fn main() -> anyhow::Result<()> {
     let engine = Traverze::new()?;
-    let paths = engine.list_files()?;
+    let paths = engine.list()?;
     for path in &paths {
         println!("{}", path);
     }
@@ -137,7 +151,7 @@ use traverze::Traverze;
 
 fn main() -> anyhow::Result<()> {
     let engine = Traverze::new()?;
-    let removed = engine.remove_files(&[PathBuf::from("old_file.txt")])?;
+    let removed = engine.remove(&[PathBuf::from("old_file.txt")])?;
     println!("removed {} file(s)", removed);
     Ok(())
 }
@@ -146,15 +160,13 @@ fn main() -> anyhow::Result<()> {
 ### Select tokenizer mode explicitly
 
 ```rust
-use std::path::Path;
 use traverze::{TokenizerMode, Traverze};
 
 fn main() -> anyhow::Result<()> {
     // Use Lindera IPADIC tokenizer (requires `tokenizer-lindera-ipadic` feature)
-    let engine = Traverze::new_in_dir_with_mode(
-        Path::new(".traverze-index"),
-        TokenizerMode::LinderaIpadic,
-    )?;
+    let engine = Traverze::builder()
+        .mode(TokenizerMode::LinderaIpadic)
+        .open()?;
     // ...
     Ok(())
 }

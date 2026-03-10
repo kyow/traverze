@@ -19,7 +19,7 @@ enum Commands {
     /// Index files for full-text search
     Index {
         /// Path to the index directory
-        #[arg(long, default_value = ".traverze-index")]
+        #[arg(long, default_value = traverze::DEFAULT_INDEX_DIR)]
         index_dir: PathBuf,
         /// Store file contents for snippet generation
         #[arg(long, default_value_t = false)]
@@ -33,7 +33,7 @@ enum Commands {
     /// Remove files from the index
     Remove {
         /// Path to the index directory
-        #[arg(long, default_value = ".traverze-index")]
+        #[arg(long, default_value = traverze::DEFAULT_INDEX_DIR)]
         index_dir: PathBuf,
         /// Files to remove from the index
         #[arg(required = true)]
@@ -42,13 +42,13 @@ enum Commands {
     /// List all indexed files
     List {
         /// Path to the index directory
-        #[arg(long, default_value = ".traverze-index")]
+        #[arg(long, default_value = traverze::DEFAULT_INDEX_DIR)]
         index_dir: PathBuf,
     },
     /// Search the index for a query
     Search {
         /// Path to the index directory
-        #[arg(long, default_value = ".traverze-index")]
+        #[arg(long, default_value = traverze::DEFAULT_INDEX_DIR)]
         index_dir: PathBuf,
         /// Maximum number of results to return
         #[arg(long, default_value_t = 20)]
@@ -63,7 +63,7 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = SnippetFormatArg::Text)]
         snippet_format: SnippetFormatArg,
         /// Query preprocessing mode
-        #[arg(long, value_enum, default_value_t = QueryPreprocessArg::AnalyzeAnd)]
+        #[arg(long, value_enum, default_value_t = QueryPreprocessArg::Auto)]
         query_preprocess: QueryPreprocessArg,
         /// Search query string
         query: String,
@@ -87,15 +87,15 @@ impl From<SnippetFormatArg> for traverze::SnippetFormat {
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
 enum QueryPreprocessArg {
-    None,
-    AnalyzeAnd,
+    Plain,
+    Auto,
 }
 
 impl From<QueryPreprocessArg> for traverze::QueryPreprocess {
     fn from(value: QueryPreprocessArg) -> Self {
         match value {
-            QueryPreprocessArg::None => Self::None,
-            QueryPreprocessArg::AnalyzeAnd => Self::AnalyzeAnd,
+            QueryPreprocessArg::Plain => Self::Plain,
+            QueryPreprocessArg::Auto => Self::Auto,
         }
     }
 }
@@ -120,11 +120,10 @@ fn main() -> Result<()> {
             if reset && index_dir.exists() {
                 fs::remove_dir_all(&index_dir)?;
             }
-            let engine_result = traverze::Traverze::new_in_dir_for_indexing(
-                &index_dir,
-                traverze::default_tokenizer_mode(),
-                with_snippet,
-            );
+            let engine_result = traverze::Traverze::builder()
+                .index_dir(&index_dir)
+                .with_snippet(with_snippet)
+                .open();
             let engine = match engine_result {
                 Ok(engine) => engine,
                 Err(err) if err.to_string().contains("index snippet support mismatch") => {
@@ -136,21 +135,21 @@ fn main() -> Result<()> {
                 }
                 Err(err) => return Err(err),
             };
-            let (indexed, elapsed) = time_block(|| engine.index_files(&files))?;
+            let (indexed, elapsed) = time_block(|| engine.index(&files))?;
             println!("indexed {} file(s)", indexed);
             eprintln!("index_time_ms\t{:.3}", elapsed_ms(elapsed));
         }
         Commands::List { index_dir } => {
-            let engine = traverze::Traverze::new_in_dir(&index_dir)?;
-            let (paths, elapsed) = time_block(|| engine.list_files())?;
+            let engine = traverze::Traverze::builder().index_dir(&index_dir).open()?;
+            let (paths, elapsed) = time_block(|| engine.list())?;
             for path in &paths {
                 println!("{}", path);
             }
             eprintln!("list_time_ms\t{:.3}\t{} file(s)", elapsed_ms(elapsed), paths.len());
         }
         Commands::Remove { index_dir, files } => {
-            let engine = traverze::Traverze::new_in_dir(&index_dir)?;
-            let (removed, elapsed) = time_block(|| engine.remove_files(&files))?;
+            let engine = traverze::Traverze::builder().index_dir(&index_dir).open()?;
+            let (removed, elapsed) = time_block(|| engine.remove(&files))?;
             println!("removed {} file(s)", removed);
             eprintln!("remove_time_ms\t{:.3}", elapsed_ms(elapsed));
         }
@@ -163,8 +162,8 @@ fn main() -> Result<()> {
             query_preprocess,
             query,
         } => {
-            let engine = traverze::Traverze::new_in_dir(&index_dir)?;
-            if with_snippet && !engine.supports_snippet() {
+            let engine = traverze::Traverze::builder().index_dir(&index_dir).open()?;
+            if with_snippet && !engine.has_snippet() {
                 return Err(anyhow!(
                     "this index does not support snippet. run `traverze index --index-dir {} --reset` and then `traverze index --index-dir {} --with-snippet <FILES...>`",
                     index_dir.display(),
@@ -180,7 +179,7 @@ fn main() -> Result<()> {
                 query_preprocess: query_preprocess.into(),
             };
             let (hits, elapsed) =
-                time_block(|| engine.search_with_options(&query, search_options))?;
+                time_block(|| engine.search(&query, search_options))?;
             for hit in hits {
                 if let Some(snippet) = hit.snippet {
                     let escaped = snippet
