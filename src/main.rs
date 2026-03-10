@@ -163,7 +163,7 @@ fn main() -> Result<()> {
             query,
         } => {
             let engine = traverze::Traverze::builder().index_dir(&index_dir).open()?;
-            if with_snippet && !engine.supports_snippet() {
+            if with_snippet && !engine.has_snippet() {
                 return Err(anyhow!(
                     "this index does not support snippet. run `traverze index --index-dir {} --reset` and then `traverze index --index-dir {} --with-snippet <FILES...>`",
                     index_dir.display(),

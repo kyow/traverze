@@ -135,7 +135,7 @@ impl TraverzeBuilder {
             self.mode,
             build_schema(self.with_snippet),
         )?;
-        if self.with_snippet && !engine.supports_snippet() {
+        if self.with_snippet && !engine.has_snippet() {
             return Err(anyhow!(
                 "index snippet support mismatch: expected enabled, but existing index is disabled"
             ));
@@ -336,7 +336,7 @@ impl Traverze {
         Ok(paths)
     }
 
-    pub fn supports_snippet(&self) -> bool {
+    pub fn has_snippet(&self) -> bool {
         self.contents_is_stored
     }
 }

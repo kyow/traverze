@@ -110,7 +110,7 @@ fn main() -> anyhow::Result<()> {
 
 > **Note:** Snippet search requires the index to be built with `--with-snippet` (CLI) or
 > `Traverze::builder().with_snippet(true).open()` (library).
-> Use `engine.supports_snippet()` to check at runtime.
+> Use `engine.has_snippet()` to check at runtime.
 
 ### List indexed files
 
