@@ -69,7 +69,7 @@ fn main() -> anyhow::Result<()> {
         PathBuf::from("README.md"),
         PathBuf::from("src/lib.rs"),
     ];
-    engine.index_files(&files)?;
+    engine.index(&files)?;
 
     let hits = engine.search("tantivy", 10)?;
     for hit in hits {
@@ -120,7 +120,7 @@ use traverze::Traverze;
 
 fn main() -> anyhow::Result<()> {
     let engine = Traverze::new()?;
-    let paths = engine.list_files()?;
+    let paths = engine.list()?;
     for path in &paths {
         println!("{}", path);
     }
@@ -137,7 +137,7 @@ use traverze::Traverze;
 
 fn main() -> anyhow::Result<()> {
     let engine = Traverze::new()?;
-    let removed = engine.remove_files(&[PathBuf::from("old_file.txt")])?;
+    let removed = engine.remove(&[PathBuf::from("old_file.txt")])?;
     println!("removed {} file(s)", removed);
     Ok(())
 }
