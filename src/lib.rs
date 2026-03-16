@@ -1,4 +1,4 @@
-﻿use std::fs;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 #[cfg(not(feature = "tokenizer-lindera-ipadic"))]
@@ -130,11 +130,8 @@ impl TraverzeBuilder {
     }
 
     pub fn open(self) -> Result<Traverze> {
-        let engine = Traverze::open_or_create(
-            &self.index_dir,
-            self.mode,
-            build_schema(self.with_snippet),
-        )?;
+        let engine =
+            Traverze::open_or_create(&self.index_dir, self.mode, build_schema(self.with_snippet))?;
         if self.with_snippet && !engine.has_snippet() {
             return Err(anyhow!(
                 "index snippet support mismatch: expected enabled, but existing index is disabled"
@@ -247,10 +244,7 @@ impl Traverze {
         let processed_query = preprocess_query(&self.index, query, options.query_preprocess)?;
         let (parsed_query, parse_errors) = query_parser.parse_query_lenient(&processed_query);
         if !parse_errors.is_empty() {
-            eprintln!(
-                "warning: query parse errors (ignored): {:?}",
-                parse_errors
-            );
+            eprintln!("warning: query parse errors (ignored): {:?}", parse_errors);
         }
 
         let top_docs = searcher
@@ -319,12 +313,10 @@ impl Traverze {
                 if segment_reader.is_deleted(doc_id) {
                     continue;
                 }
-                let doc: tantivy::schema::TantivyDocument =
-                    store_reader.get(doc_id).context("failed to load document")?;
-                if let Some(path) = doc
-                    .get_first(self.path_field)
-                    .and_then(|v| v.as_str())
-                {
+                let doc: tantivy::schema::TantivyDocument = store_reader
+                    .get(doc_id)
+                    .context("failed to load document")?;
+                if let Some(path) = doc.get_first(self.path_field).and_then(|v| v.as_str()) {
                     if !path.is_empty() {
                         paths.push(path.to_string());
                     }
@@ -383,7 +375,7 @@ fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result
                                 .join(" ");
                             format!("({term} OR \"{char_phrase}\")")
                         } else if is_tantivy_keyword(term) {
-                            format!("\"{}\"" , term)
+                            format!("\"{}\"", term)
                         } else {
                             term.clone()
                         }
@@ -531,8 +523,14 @@ mod tests {
         let files = engine.list().unwrap();
         assert_eq!(files.len(), 2);
         // list returns sorted paths
-        let canonical_a = std::fs::canonicalize(&file_a).unwrap().to_string_lossy().to_string();
-        let canonical_b = std::fs::canonicalize(&file_b).unwrap().to_string_lossy().to_string();
+        let canonical_a = std::fs::canonicalize(&file_a)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let canonical_b = std::fs::canonicalize(&file_b)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         assert!(files.contains(&canonical_a));
         assert!(files.contains(&canonical_b));
     }
@@ -564,7 +562,10 @@ mod tests {
 
             let files = engine.list().unwrap();
             assert_eq!(files.len(), 1);
-            let canonical_b = std::fs::canonicalize(&file_b).unwrap().to_string_lossy().to_string();
+            let canonical_b = std::fs::canonicalize(&file_b)
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
             assert_eq!(files[0], canonical_b);
         }
     }
