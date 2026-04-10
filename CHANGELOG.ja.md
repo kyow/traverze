@@ -1,43 +1,47 @@
 # 変更履歴
 
-このプロジェクトに対するすべての重要な変更は、このファイルに記録されます。
+このプロジェクトに対するすべての重要な変更はこのファイルに記録されます。
 
-このファイルのフォーマットは [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に基づいており、
-このプロジェクトは [セマンティック バージョニング](https://semver.org/lang/ja/spec/v2.0.0.html) に準拠しています。
+このフォーマットは [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に基づいており、
+このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/spec/v2.0.0.html) に準拠しています。
 
 ## [Unreleased]
 
 ### Added
 
-- Lindera トークナイザーによる日本語対応（IPAdic フィーチャーフラグ）
+- CJK 対応のクエリ前処理（形態素トークン展開による `QueryPreprocess::Auto`）
 - インデックス済みファイルの一覧表示コマンド
-- 検索精度向上のためのクエリ前処理
-- Apache 2.0 および MIT デュアルライセンスの追加
-- Traverze 初期化のビルダーパターン導入
+- Traverze 初期化のビルダーパターン導入（`Traverze::builder()`）
 - `DEFAULT_INDEX_DIR` パブリック定数の公開
+- Apache 2.0 および MIT デュアルライセンスの追加
 
 ### Changed
 
-- インデックス・削除・一覧のパブリック API メソッド名を統一
-- 検索メソッドを `SearchOptions` を使用する形にリファクタリング
+- `index_files` を `index`、`remove_files` を `remove` にリネーム
+- `search` と `search_with_options` を `SearchOptions` を受け取る単一の `search` メソッドに統合
+- コンストラクタ（`new_in_dir`、`new_in_dir_with_mode`、`new_in_dir_for_indexing`）をビルダーパターンに置き換え
+- `supports_snippet()` を `has_snippet()` にリネーム
 - クエリ前処理オプションを `plain` と `auto` に変更
 
 ### Fixed
 
-- 寛容なエラーハンドリングとキーワードクォートによるクエリ解析の修正
-- スニペットサポートチェックのメソッド名を修正
+- クエリ解析を寛容モードに変更し、予約語のキーワードクォートに対応
 - LICENSE ファイルの著作者名を 'kyow' に修正
 
 ### Removed
 
 - `AnalyzeOriginalOrAnd` オプションの削除
 - CLI およびインデックス処理からデバッグ用トークナイズオプションを削除
+- `search_with_options` メソッドの削除（`search` に統合）
 
 ## [0.2.0] - 2026-02-27
 
 ### Added
 
-- 検索結果にスニペットを含めるオプション
+- 検索結果にスニペットを含めるオプション（`--with-snippet`、`SnippetOptions`、`SnippetFormat`）
+- `search_with_options` メソッドと `SearchOptions` 構造体
+- インデックスコマンドに `--reset` フラグを追加
+- CLI に `--version` フラグを追加
 - インデックスのリセット機能
 
 ### Fixed

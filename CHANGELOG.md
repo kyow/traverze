@@ -9,35 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Japanese language support using Lindera tokenizer (IPAdic feature flag)
+- CJK-aware query preprocessing with morphological token expansion (`QueryPreprocess::Auto`)
 - Command to list all indexed files with their paths
-- Query preprocessing for improved search accuracy
-- Apache 2.0 and MIT dual licensing
-- Builder pattern for Traverze initialization
+- Builder pattern for Traverze initialization (`Traverze::builder()`)
 - `DEFAULT_INDEX_DIR` public constant for consistent index directory usage
+- Apache 2.0 and MIT dual licensing
 
 ### Changed
 
-- Renamed public API methods for indexing, removing, and listing for consistency
-- Refactored search methods to use `SearchOptions` for consistency
+- Renamed `index_files` to `index`, `remove_files` to `remove` for consistency
+- Consolidated `search` and `search_with_options` into a single `search` method that takes `SearchOptions`
+- Replaced constructors (`new_in_dir`, `new_in_dir_with_mode`, `new_in_dir_for_indexing`) with builder pattern
+- Renamed `supports_snippet()` to `has_snippet()`
 - Updated query preprocessing options to use `plain` and `auto` for improved clarity
 
 ### Fixed
 
-- Query parsing with lenient error handling and keyword quoting
-- Snippet support check method name for consistency
+- Query parsing now uses lenient mode with keyword quoting for reserved words
 - Copyright name corrected to 'kyow' in LICENSE files
 
 ### Removed
 
 - `AnalyzeOriginalOrAnd` option
 - Debug tokenization options from CLI and indexing
+- `search_with_options` method (merged into `search`)
 
 ## [0.2.0] - 2026-02-27
 
 ### Added
 
-- Options to include snippets in search results
+- Options to include snippets in search results (`--with-snippet`, `SnippetOptions`, `SnippetFormat`)
+- `search_with_options` method and `SearchOptions` struct
+- `--reset` flag for index command to recreate index
+- `--version` flag for CLI
 - Index reset function
 
 ### Fixed
