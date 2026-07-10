@@ -1,4 +1,4 @@
-﻿use std::fs;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 #[cfg(not(feature = "tokenizer-lindera-ipadic"))]
@@ -130,11 +130,8 @@ impl TraverzeBuilder {
     }
 
     pub fn open(self) -> Result<Traverze> {
-        let engine = Traverze::open_or_create(
-            &self.index_dir,
-            self.mode,
-            build_schema(self.with_snippet),
-        )?;
+        let engine =
+            Traverze::open_or_create(&self.index_dir, self.mode, build_schema(self.with_snippet))?;
         if self.with_snippet && !engine.has_snippet() {
             return Err(anyhow!(
                 "index snippet support mismatch: expected enabled, but existing index is disabled"
@@ -247,10 +244,7 @@ impl Traverze {
         let processed_query = preprocess_query(&self.index, query, options.query_preprocess)?;
         let (parsed_query, parse_errors) = query_parser.parse_query_lenient(&processed_query);
         if !parse_errors.is_empty() {
-            eprintln!(
-                "warning: query parse errors (ignored): {:?}",
-                parse_errors
-            );
+            eprintln!("warning: query parse errors (ignored): {:?}", parse_errors);
         }
 
         let top_docs = searcher
@@ -319,12 +313,10 @@ impl Traverze {
                 if segment_reader.is_deleted(doc_id) {
                     continue;
                 }
-                let doc: tantivy::schema::TantivyDocument =
-                    store_reader.get(doc_id).context("failed to load document")?;
-                if let Some(path) = doc
-                    .get_first(self.path_field)
-                    .and_then(|v| v.as_str())
-                {
+                let doc: tantivy::schema::TantivyDocument = store_reader
+                    .get(doc_id)
+                    .context("failed to load document")?;
+                if let Some(path) = doc.get_first(self.path_field).and_then(|v| v.as_str()) {
                     if !path.is_empty() {
                         paths.push(path.to_string());
                     }
@@ -352,7 +344,12 @@ fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result
             let mut stream = analyzer.token_stream(query);
             let mut terms = Vec::new();
             stream.process(&mut |token| {
-                if !token.text.is_empty() {
+                // Drop tokens containing whitespace. The ngram tokenizer emits
+                // grams spanning word boundaries (e.g. "c d" for "abc def");
+                // requiring them would turn a multi-word query into a substring
+                // search, while the per-word grams alone give the intended
+                // "AND across words" semantics.
+                if !token.text.is_empty() && !token.text.chars().any(char::is_whitespace) {
                     terms.push(token.text.to_string());
                 }
             });
@@ -368,9 +365,15 @@ fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result
                 // query tokenizer due to context-dependent morphological analysis.
                 //
                 // For a CJK token with >1 char (e.g. "日付") we emit:
-                //   (日付 OR "日 付")
+                //   ("日付" OR "日 付")
                 // The phrase query "日 付" matches when the index has the
                 // individual characters as adjacent tokens.
+                //
+                // Every token is emitted double-quoted (with `\` and `"`
+                // escaped): a quoted token that analyzes to a single term
+                // parses as a plain term query, and quoting keeps embedded
+                // Tantivy syntax characters (`:`, `(`, `-`, ...) and reserved
+                // keywords (AND, OR, ...) from being parsed as query structure.
                 let expanded_parts: Vec<String> = terms
                     .iter()
                     .map(|term| {
@@ -381,11 +384,9 @@ fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result
                                 .map(|c| c.to_string())
                                 .collect::<Vec<_>>()
                                 .join(" ");
-                            format!("({term} OR \"{char_phrase}\")")
-                        } else if is_tantivy_keyword(term) {
-                            format!("\"{}\"" , term)
+                            format!("(\"{term}\" OR \"{char_phrase}\")")
                         } else {
-                            term.clone()
+                            format!("\"{}\"", escape_for_phrase(term))
                         }
                     })
                     .collect();
@@ -401,13 +402,10 @@ fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result
     }
 }
 
-/// Returns `true` if the given string is a Tantivy query syntax reserved keyword.
-/// These must be quoted when used as literal search terms.
-fn is_tantivy_keyword(s: &str) -> bool {
-    matches!(
-        s.to_uppercase().as_str(),
-        "AND" | "OR" | "NOT" | "IN" | "TO"
-    )
+/// Escapes `\` and `"` so an arbitrary token can be embedded inside a
+/// double-quoted Tantivy phrase without terminating or altering it.
+fn escape_for_phrase(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Returns `true` for CJK ideographs, Hiragana, and Katakana characters
@@ -484,6 +482,54 @@ fn register_tokenizer(index: &Index, mode: TokenizerMode) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    fn engine_with_docs(
+        dir: &std::path::Path,
+        mode: crate::TokenizerMode,
+        docs: &[(&str, &str)],
+    ) -> crate::Traverze {
+        let engine = crate::Traverze::builder()
+            .index_dir(&dir.join("index"))
+            .mode(mode)
+            .open()
+            .unwrap();
+        let files: Vec<std::path::PathBuf> = docs
+            .iter()
+            .map(|(name, content)| {
+                let path = dir.join(name);
+                std::fs::write(&path, content).unwrap();
+                path
+            })
+            .collect();
+        engine.index(&files).unwrap();
+        engine
+    }
+
+    fn search_names(
+        engine: &crate::Traverze,
+        query: &str,
+        mode: crate::QueryPreprocess,
+    ) -> Vec<String> {
+        let options = crate::SearchOptions {
+            limit: 10,
+            snippet: None,
+            query_preprocess: mode,
+        };
+        let mut names: Vec<String> = engine
+            .search(query, options)
+            .unwrap()
+            .iter()
+            .map(|hit| {
+                std::path::Path::new(&hit.path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
     #[cfg(not(feature = "tokenizer-lindera-ipadic"))]
     #[test]
     fn default_mode_is_ngram_without_lindera_feature() {
@@ -531,10 +577,159 @@ mod tests {
         let files = engine.list().unwrap();
         assert_eq!(files.len(), 2);
         // list returns sorted paths
-        let canonical_a = std::fs::canonicalize(&file_a).unwrap().to_string_lossy().to_string();
-        let canonical_b = std::fs::canonicalize(&file_b).unwrap().to_string_lossy().to_string();
+        let canonical_a = std::fs::canonicalize(&file_a)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let canonical_b = std::fs::canonicalize(&file_b)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         assert!(files.contains(&canonical_a));
         assert!(files.contains(&canonical_b));
+    }
+
+    // Issue #24: on an ngram index, auto mode must AND the query words even
+    // though the analyzer emits ngram tokens spanning word boundaries.
+    #[test]
+    fn auto_multiword_query_is_and_on_ngram_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = engine_with_docs(
+            dir.path(),
+            crate::TokenizerMode::Ngram,
+            &[
+                ("a.txt", "abc xyz"),
+                ("b.txt", "def xyz"),
+                ("c.txt", "abc def xyz"),
+            ],
+        );
+
+        let auto = search_names(&engine, "abc def", crate::QueryPreprocess::Auto);
+        assert_eq!(auto, vec!["c.txt"]);
+
+        // plain mode keeps Tantivy's default OR semantics
+        let plain = search_names(&engine, "abc def", crate::QueryPreprocess::Plain);
+        assert_eq!(plain, vec!["a.txt", "b.txt", "c.txt"]);
+    }
+
+    // Issue #24: the AND/OR/... operators inside the user query are tokenized
+    // like any other word and must be matched literally, not parsed as syntax.
+    #[test]
+    fn auto_and_keyword_is_literal_on_ngram_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = engine_with_docs(
+            dir.path(),
+            crate::TokenizerMode::Ngram,
+            &[
+                ("plain.txt", "search replace tool"),
+                ("with_and.txt", "search and replace tool"),
+            ],
+        );
+
+        let hits = search_names(&engine, "search AND replace", crate::QueryPreprocess::Auto);
+        assert_eq!(hits, vec!["with_and.txt"]);
+    }
+
+    // Issue #24: Tantivy syntax characters inside tokens must not corrupt the
+    // assembled query structure.
+    #[test]
+    fn auto_syntax_chars_do_not_corrupt_query_on_ngram_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = engine_with_docs(
+            dir.path(),
+            crate::TokenizerMode::Ngram,
+            &[
+                ("colon.txt", "foo:bar baz"),
+                ("nocolon.txt", "foo bar baz"),
+                ("quoted.txt", "say \"hi\" there"),
+                ("unquoted.txt", "say hi there"),
+            ],
+        );
+
+        let hits = search_names(&engine, "foo:bar", crate::QueryPreprocess::Auto);
+        assert_eq!(hits, vec!["colon.txt"]);
+
+        let hits = search_names(&engine, "say \"hi\"", crate::QueryPreprocess::Auto);
+        assert_eq!(hits, vec!["quoted.txt"]);
+    }
+
+    #[test]
+    fn auto_cjk_query_on_ngram_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = engine_with_docs(
+            dir.path(),
+            crate::TokenizerMode::Ngram,
+            &[
+                ("date.txt", "日付を確認する"),
+                ("other.txt", "無関係な内容"),
+            ],
+        );
+
+        let hits = search_names(&engine, "日付", crate::QueryPreprocess::Auto);
+        assert_eq!(hits, vec!["date.txt"]);
+
+        // AND semantics: a query with an unknown word must not match
+        let hits = search_names(&engine, "日付 未知語ワード", crate::QueryPreprocess::Auto);
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn preprocess_auto_drops_cross_word_ngrams_and_quotes_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = crate::Traverze::builder()
+            .index_dir(dir.path())
+            .mode(crate::TokenizerMode::Ngram)
+            .open()
+            .unwrap();
+
+        let out = crate::preprocess_query(&engine.index, "abc def", crate::QueryPreprocess::Auto)
+            .unwrap();
+        assert_eq!(
+            out,
+            r#""ab" AND "abc" AND "bc" AND "de" AND "def" AND "ef""#
+        );
+
+        let out =
+            crate::preprocess_query(&engine.index, "a\"b", crate::QueryPreprocess::Auto).unwrap();
+        assert_eq!(out, r#""a\"" AND "a\"b" AND "\"b""#);
+    }
+
+    #[cfg(feature = "tokenizer-lindera-ipadic")]
+    #[test]
+    fn auto_multiword_query_is_and_on_lindera_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = engine_with_docs(
+            dir.path(),
+            crate::TokenizerMode::LinderaIpadic,
+            &[
+                ("a.txt", "abc xyz"),
+                ("b.txt", "def xyz"),
+                ("c.txt", "abc def xyz"),
+            ],
+        );
+
+        let hits = search_names(&engine, "abc def", crate::QueryPreprocess::Auto);
+        assert_eq!(hits, vec!["c.txt"]);
+    }
+
+    #[cfg(feature = "tokenizer-lindera-ipadic")]
+    #[test]
+    fn auto_cjk_query_on_lindera_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = engine_with_docs(
+            dir.path(),
+            crate::TokenizerMode::LinderaIpadic,
+            &[
+                ("date.txt", "日付を確認する"),
+                ("other.txt", "無関係な内容"),
+            ],
+        );
+
+        let hits = search_names(&engine, "日付 確認", crate::QueryPreprocess::Auto);
+        assert_eq!(hits, vec!["date.txt"]);
+
+        let hits = search_names(&engine, "日付 未知語ワード", crate::QueryPreprocess::Auto);
+        assert!(hits.is_empty());
     }
 
     #[test]
@@ -564,7 +759,10 @@ mod tests {
 
             let files = engine.list().unwrap();
             assert_eq!(files.len(), 1);
-            let canonical_b = std::fs::canonicalize(&file_b).unwrap().to_string_lossy().to_string();
+            let canonical_b = std::fs::canonicalize(&file_b)
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
             assert_eq!(files[0], canonical_b);
         }
     }
