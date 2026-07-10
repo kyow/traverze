@@ -1,5 +1,7 @@
 # traverze
 
+English | [日本語](README.ja.md)
+
 A utility library and CLI for full-text search built on Tantivy and Lindera, with built-in Japanese language support.
 
 ## Features
