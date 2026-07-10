@@ -112,7 +112,9 @@ fn run_mode(base_dir: &Path, files: &[PathBuf], mode: TokenizerMode, label: &str
     let mut total_hits = 0usize;
     for _ in 0..SEARCH_REPEAT {
         for query in QUERIES {
-            total_hits += engine.search(query, traverze::SearchOptions::with_limit(20))?.len();
+            total_hits += engine
+                .search(query, traverze::SearchOptions::with_limit(20))?
+                .len();
         }
     }
     let search_elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;

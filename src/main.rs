@@ -145,7 +145,11 @@ fn main() -> Result<()> {
             for path in &paths {
                 println!("{}", path);
             }
-            eprintln!("list_time_ms\t{:.3}\t{} file(s)", elapsed_ms(elapsed), paths.len());
+            eprintln!(
+                "list_time_ms\t{:.3}\t{} file(s)",
+                elapsed_ms(elapsed),
+                paths.len()
+            );
         }
         Commands::Remove { index_dir, files } => {
             let engine = traverze::Traverze::builder().index_dir(&index_dir).open()?;
@@ -178,8 +182,7 @@ fn main() -> Result<()> {
                 }),
                 query_preprocess: query_preprocess.into(),
             };
-            let (hits, elapsed) =
-                time_block(|| engine.search(&query, search_options))?;
+            let (hits, elapsed) = time_block(|| engine.search(&query, search_options))?;
             for hit in hits {
                 if let Some(snippet) = hit.snippet {
                     let escaped = snippet
