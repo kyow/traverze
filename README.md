@@ -1,15 +1,25 @@
 # traverze
 
-A utility library and CLI for full-text search built on Tantivy and Lindera.
+English | [日本語](README.ja.md)
+
+A utility library and CLI for full-text search built on Tantivy and Lindera, with built-in Japanese language support.
 
 ## Features
+
+- **Full-Text Search:** Fast indexing and querying powered by Tantivy.
+- **Japanese Support:** Choose between an N-gram tokenizer for broad language coverage or Lindera with IPADIC for accurate Japanese morphological analysis.
+- **Snippet Extraction:** Retrieve highlighted text snippets alongside search results.
+- **Dual Interface:** Use as a CLI tool or integrate directly as a Rust library.
+- **Cross-Platform:** Built with Rust, runs on Windows, macOS, and Linux.
+
+### Tokenizer feature flags
 
 - `tokenizer-ngram` (default) — Character-based 2–3 gram tokenizer. Works with all languages including CJK. Lightweight with no additional dictionary data.
 - `tokenizer-lindera-ipadic` (optional) — Japanese morphological analyzer using the IPADIC dictionary. Produces more accurate tokens for Japanese text but increases binary size (~50 MB).
 
 ## Requirements
 
-- Rust 1.85+ (edition 2024)
+- [Rust](https://www.rust-lang.org/tools/install) 1.85+ (edition 2024)
 
 ## Installation
 
@@ -40,7 +50,7 @@ Notes:
 - `list` outputs one indexed file path per line.
 - `--query-preprocess` controls how the query is tokenized before searching:
   - `plain` — pass the query string directly to Tantivy's query parser.
-  - `auto` (default) — tokenize the query with the index's analyzer, combine tokens with AND. CJK substrings are wrapped as phrase queries to preserve word boundaries. Tantivy reserved keywords (`AND`, `OR`, `NOT`, etc.) are automatically quoted.
+  - `auto` (default) — tokenize the query with the index's analyzer, combine tokens with AND. CJK substrings are wrapped as phrase queries to preserve word boundaries. Every token is quoted and escaped, so Tantivy query syntax (reserved keywords such as `AND`/`OR`/`NOT` and special characters) is treated as literal text.
 
 ### Search output format
 
@@ -60,14 +70,14 @@ Timing information is printed to stderr.
 
 ```toml
 [dependencies]
-traverze = "0.2"
+traverze = "0.3"
 ```
 
 Use Lindera (IPADIC) tokenizer:
 
 ```toml
 [dependencies]
-traverze = { version = "0.2", features = ["tokenizer-lindera-ipadic"] }
+traverze = { version = "0.3", features = ["tokenizer-lindera-ipadic"] }
 ```
 
 ### Minimal example
