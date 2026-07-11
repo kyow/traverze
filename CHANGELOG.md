@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Query parsing now uses lenient mode with keyword quoting for reserved words
+- Query parsing now uses lenient mode
+- Auto query preprocessing now preserves AND semantics on the ngram index (every token is quoted and escaped, tokens containing whitespace are dropped)
 - Copyright name corrected to 'kyow' in LICENSE files
 
 ### Removed
