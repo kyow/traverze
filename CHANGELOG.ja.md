@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-11
+
 ### Added
 
 - CJK 対応のクエリ前処理（形態素トークン展開による `QueryPreprocess::Auto`）
@@ -63,6 +65,7 @@
 - ファイルをインデックスから削除するコマンド
 - インデックスおよび検索の処理時間計測
 
-[Unreleased]: https://github.com/kyow/traverze/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/kyow/traverze/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/kyow/traverze/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kyow/traverze/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kyow/traverze/releases/tag/v0.1.0
