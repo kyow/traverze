@@ -1,5 +1,7 @@
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[cfg(not(feature = "tokenizer-lindera-ipadic"))]
 use anyhow::bail;
@@ -13,16 +15,22 @@ use lindera::segmenter::Segmenter;
 #[cfg(feature = "tokenizer-lindera-ipadic")]
 use lindera_tantivy::tokenizer::LinderaTokenizer;
 use tantivy::collector::TopDocs;
+use tantivy::directory::error::{OpenReadError, OpenWriteError};
 use tantivy::query::QueryParser;
 use tantivy::schema::{
     Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{LowerCaser, NgramTokenizer, RemoveLongFilter, TextAnalyzer, TokenStream};
-use tantivy::{Index, ReloadPolicy, Term, doc};
+use tantivy::{Index, IndexWriter, ReloadPolicy, TantivyError, Term, doc};
 
 const TOKENIZER_NAME: &str = "traverze_ja";
 pub const DEFAULT_INDEX_DIR: &str = ".traverze-index";
+
+const WRITER_HEAP_SIZE: usize = 50_000_000;
+/// Number of times a commit is replayed after a transient failure (issue #23).
+const COMMIT_RETRIES: usize = 2;
+const COMMIT_RETRY_BACKOFF: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenizerMode {
@@ -164,6 +172,10 @@ impl Traverze {
                 .with_context(|| format!("failed to create index: {}", index_dir.display()))?,
         };
 
+        Self::from_index(index, mode)
+    }
+
+    fn from_index(index: Index, mode: TokenizerMode) -> Result<Self> {
         register_tokenizer(&index, mode)?;
         let schema = index.schema();
         let path_field = schema
@@ -183,52 +195,78 @@ impl Traverze {
     }
 
     pub fn index(&self, files: &[PathBuf]) -> Result<usize> {
-        let mut writer = self
-            .index
-            .writer::<tantivy::schema::TantivyDocument>(50_000_000)
-            .context("failed to create index writer")?;
+        self.commit_with_retry(|writer| {
+            let mut count = 0usize;
+            for file in files {
+                if !file.is_file() {
+                    continue;
+                }
+                let abs = normalize_path(file);
+                let content = fs::read_to_string(&abs)
+                    .or_else(|_| fs::read(&abs).map(|b| String::from_utf8_lossy(&b).into_owned()))
+                    .with_context(|| format!("failed to read file: {}", abs.display()))?;
 
-        let mut count = 0usize;
-        for file in files {
-            if !file.is_file() {
-                continue;
+                let path_text = abs.to_string_lossy().to_string();
+                writer.delete_term(Term::from_field_text(self.path_field, &path_text));
+                writer
+                    .add_document(doc!(
+                        self.path_field => path_text,
+                        self.contents_field => content,
+                    ))
+                    .context("failed to add document")?;
+                count += 1;
             }
-            let abs = normalize_path(file);
-            let content = fs::read_to_string(&abs)
-                .or_else(|_| fs::read(&abs).map(|b| String::from_utf8_lossy(&b).into_owned()))
-                .with_context(|| format!("failed to read file: {}", abs.display()))?;
-
-            let path_text = abs.to_string_lossy().to_string();
-            writer.delete_term(Term::from_field_text(self.path_field, &path_text));
-            writer
-                .add_document(doc!(
-                    self.path_field => path_text,
-                    self.contents_field => content,
-                ))
-                .context("failed to add document")?;
-            count += 1;
-        }
-
-        writer.commit().context("failed to commit index")?;
-        Ok(count)
+            Ok(count)
+        })
     }
 
     pub fn remove(&self, files: &[PathBuf]) -> Result<usize> {
-        let mut writer = self
-            .index
-            .writer::<tantivy::schema::TantivyDocument>(50_000_000)
-            .context("failed to create index writer")?;
+        self.commit_with_retry(|writer| {
+            let mut count = 0usize;
+            for file in files {
+                let abs = normalize_path(file);
+                let path_text = abs.to_string_lossy().to_string();
+                writer.delete_term(Term::from_field_text(self.path_field, &path_text));
+                count += 1;
+            }
+            Ok(count)
+        })
+    }
 
-        let mut count = 0usize;
-        for file in files {
-            let abs = normalize_path(file);
-            let path_text = abs.to_string_lossy().to_string();
-            writer.delete_term(Term::from_field_text(self.path_field, &path_text));
-            count += 1;
+    /// Runs `apply` on a fresh writer and commits, retrying the whole
+    /// operation on a transient `PermissionDenied` commit failure (issue #23:
+    /// on Windows, antivirus real-time scanning can briefly deny access to
+    /// freshly written segment files). Replaying is safe because `index` and
+    /// `remove` both issue `delete_term` before any `add_document`, making
+    /// them idempotent. The failed writer must be dropped before the next
+    /// attempt so its lockfile is released.
+    fn commit_with_retry<F>(&self, apply: F) -> Result<usize>
+    where
+        F: Fn(&mut IndexWriter) -> Result<usize>,
+    {
+        for attempt in 0..=COMMIT_RETRIES {
+            let mut writer = self
+                .index
+                .writer::<tantivy::schema::TantivyDocument>(WRITER_HEAP_SIZE)
+                .context("failed to create index writer")?;
+            let count = apply(&mut writer)?;
+            match writer.commit() {
+                Ok(_) => return Ok(count),
+                Err(err) if attempt < COMMIT_RETRIES && is_transient_commit_error(&err) => {
+                    drop(writer);
+                    std::thread::sleep(COMMIT_RETRY_BACKOFF * (attempt as u32 + 1));
+                }
+                Err(err) => {
+                    let context = if attempt > 0 {
+                        format!("failed to commit index (still failing after {attempt} retries)")
+                    } else {
+                        "failed to commit index".to_string()
+                    };
+                    return Err(err).context(context);
+                }
+            }
         }
-
-        writer.commit().context("failed to commit index")?;
-        Ok(count)
+        unreachable!("commit_with_retry loop exits only via return")
     }
 
     pub fn search(&self, query: &str, options: SearchOptions) -> Result<Vec<SearchHit>> {
@@ -402,6 +440,23 @@ fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result
     }
 }
 
+/// Returns `true` for commit errors caused by a transient
+/// `PermissionDenied`, e.g. an antivirus scanner briefly holding a freshly
+/// written segment file on Windows (issue #23). Tantivy's error variants do
+/// not expose the underlying `io::Error` via `source()`, so the variants
+/// carrying one are matched directly.
+fn is_transient_commit_error(err: &TantivyError) -> bool {
+    let kind = match err {
+        TantivyError::IoError(io_error) => Some(io_error.kind()),
+        TantivyError::OpenWriteError(OpenWriteError::IoError { io_error, .. })
+        | TantivyError::OpenReadError(OpenReadError::IoError { io_error, .. }) => {
+            Some(io_error.kind())
+        }
+        _ => None,
+    };
+    kind == Some(io::ErrorKind::PermissionDenied)
+}
+
 /// Escapes `\` and `"` so an arbitrary token can be embedded inside a
 /// double-quoted Tantivy phrase without terminating or altering it.
 fn escape_for_phrase(s: &str) -> String {
@@ -481,289 +536,4 @@ fn register_tokenizer(index: &Index, mode: TokenizerMode) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    fn engine_with_docs(
-        dir: &std::path::Path,
-        mode: crate::TokenizerMode,
-        docs: &[(&str, &str)],
-    ) -> crate::Traverze {
-        let engine = crate::Traverze::builder()
-            .index_dir(&dir.join("index"))
-            .mode(mode)
-            .open()
-            .unwrap();
-        let files: Vec<std::path::PathBuf> = docs
-            .iter()
-            .map(|(name, content)| {
-                let path = dir.join(name);
-                std::fs::write(&path, content).unwrap();
-                path
-            })
-            .collect();
-        engine.index(&files).unwrap();
-        engine
-    }
-
-    fn search_names(
-        engine: &crate::Traverze,
-        query: &str,
-        mode: crate::QueryPreprocess,
-    ) -> Vec<String> {
-        let options = crate::SearchOptions {
-            limit: 10,
-            snippet: None,
-            query_preprocess: mode,
-        };
-        let mut names: Vec<String> = engine
-            .search(query, options)
-            .unwrap()
-            .iter()
-            .map(|hit| {
-                std::path::Path::new(&hit.path)
-                    .file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .to_string()
-            })
-            .collect();
-        names.sort();
-        names
-    }
-
-    #[cfg(not(feature = "tokenizer-lindera-ipadic"))]
-    #[test]
-    fn default_mode_is_ngram_without_lindera_feature() {
-        assert_eq!(crate::default_tokenizer_mode(), crate::TokenizerMode::Ngram);
-    }
-
-    #[cfg(feature = "tokenizer-lindera-ipadic")]
-    #[test]
-    fn default_mode_is_lindera_with_feature() {
-        assert_eq!(
-            crate::default_tokenizer_mode(),
-            crate::TokenizerMode::LinderaIpadic
-        );
-    }
-
-    #[test]
-    fn list_files_empty_index() {
-        let dir = tempfile::tempdir().unwrap();
-        let engine = crate::Traverze::builder()
-            .index_dir(dir.path())
-            .mode(crate::TokenizerMode::Ngram)
-            .open()
-            .unwrap();
-        let files = engine.list().unwrap();
-        assert!(files.is_empty());
-    }
-
-    #[test]
-    fn list_files_returns_indexed_paths() {
-        let dir = tempfile::tempdir().unwrap();
-        let index_dir = dir.path().join("index");
-        let file_a = dir.path().join("a.txt");
-        let file_b = dir.path().join("b.txt");
-        std::fs::write(&file_a, "hello world").unwrap();
-        std::fs::write(&file_b, "foo bar").unwrap();
-
-        let engine = crate::Traverze::builder()
-            .index_dir(&index_dir)
-            .mode(crate::TokenizerMode::Ngram)
-            .open()
-            .unwrap();
-        let count = engine.index(&[file_a.clone(), file_b.clone()]).unwrap();
-        assert_eq!(count, 2);
-
-        let files = engine.list().unwrap();
-        assert_eq!(files.len(), 2);
-        // list returns sorted paths
-        let canonical_a = std::fs::canonicalize(&file_a)
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        let canonical_b = std::fs::canonicalize(&file_b)
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        assert!(files.contains(&canonical_a));
-        assert!(files.contains(&canonical_b));
-    }
-
-    // Issue #24: on an ngram index, auto mode must AND the query words even
-    // though the analyzer emits ngram tokens spanning word boundaries.
-    #[test]
-    fn auto_multiword_query_is_and_on_ngram_index() {
-        let dir = tempfile::tempdir().unwrap();
-        let engine = engine_with_docs(
-            dir.path(),
-            crate::TokenizerMode::Ngram,
-            &[
-                ("a.txt", "abc xyz"),
-                ("b.txt", "def xyz"),
-                ("c.txt", "abc def xyz"),
-            ],
-        );
-
-        let auto = search_names(&engine, "abc def", crate::QueryPreprocess::Auto);
-        assert_eq!(auto, vec!["c.txt"]);
-
-        // plain mode keeps Tantivy's default OR semantics
-        let plain = search_names(&engine, "abc def", crate::QueryPreprocess::Plain);
-        assert_eq!(plain, vec!["a.txt", "b.txt", "c.txt"]);
-    }
-
-    // Issue #24: the AND/OR/... operators inside the user query are tokenized
-    // like any other word and must be matched literally, not parsed as syntax.
-    #[test]
-    fn auto_and_keyword_is_literal_on_ngram_index() {
-        let dir = tempfile::tempdir().unwrap();
-        let engine = engine_with_docs(
-            dir.path(),
-            crate::TokenizerMode::Ngram,
-            &[
-                ("plain.txt", "search replace tool"),
-                ("with_and.txt", "search and replace tool"),
-            ],
-        );
-
-        let hits = search_names(&engine, "search AND replace", crate::QueryPreprocess::Auto);
-        assert_eq!(hits, vec!["with_and.txt"]);
-    }
-
-    // Issue #24: Tantivy syntax characters inside tokens must not corrupt the
-    // assembled query structure.
-    #[test]
-    fn auto_syntax_chars_do_not_corrupt_query_on_ngram_index() {
-        let dir = tempfile::tempdir().unwrap();
-        let engine = engine_with_docs(
-            dir.path(),
-            crate::TokenizerMode::Ngram,
-            &[
-                ("colon.txt", "foo:bar baz"),
-                ("nocolon.txt", "foo bar baz"),
-                ("quoted.txt", "say \"hi\" there"),
-                ("unquoted.txt", "say hi there"),
-            ],
-        );
-
-        let hits = search_names(&engine, "foo:bar", crate::QueryPreprocess::Auto);
-        assert_eq!(hits, vec!["colon.txt"]);
-
-        let hits = search_names(&engine, "say \"hi\"", crate::QueryPreprocess::Auto);
-        assert_eq!(hits, vec!["quoted.txt"]);
-    }
-
-    #[test]
-    fn auto_cjk_query_on_ngram_index() {
-        let dir = tempfile::tempdir().unwrap();
-        let engine = engine_with_docs(
-            dir.path(),
-            crate::TokenizerMode::Ngram,
-            &[
-                ("date.txt", "日付を確認する"),
-                ("other.txt", "無関係な内容"),
-            ],
-        );
-
-        let hits = search_names(&engine, "日付", crate::QueryPreprocess::Auto);
-        assert_eq!(hits, vec!["date.txt"]);
-
-        // AND semantics: a query with an unknown word must not match
-        let hits = search_names(&engine, "日付 未知語ワード", crate::QueryPreprocess::Auto);
-        assert!(hits.is_empty());
-    }
-
-    #[test]
-    fn preprocess_auto_drops_cross_word_ngrams_and_quotes_tokens() {
-        let dir = tempfile::tempdir().unwrap();
-        let engine = crate::Traverze::builder()
-            .index_dir(dir.path())
-            .mode(crate::TokenizerMode::Ngram)
-            .open()
-            .unwrap();
-
-        let out = crate::preprocess_query(&engine.index, "abc def", crate::QueryPreprocess::Auto)
-            .unwrap();
-        assert_eq!(
-            out,
-            r#""ab" AND "abc" AND "bc" AND "de" AND "def" AND "ef""#
-        );
-
-        let out =
-            crate::preprocess_query(&engine.index, "a\"b", crate::QueryPreprocess::Auto).unwrap();
-        assert_eq!(out, r#""a\"" AND "a\"b" AND "\"b""#);
-    }
-
-    #[cfg(feature = "tokenizer-lindera-ipadic")]
-    #[test]
-    fn auto_multiword_query_is_and_on_lindera_index() {
-        let dir = tempfile::tempdir().unwrap();
-        let engine = engine_with_docs(
-            dir.path(),
-            crate::TokenizerMode::LinderaIpadic,
-            &[
-                ("a.txt", "abc xyz"),
-                ("b.txt", "def xyz"),
-                ("c.txt", "abc def xyz"),
-            ],
-        );
-
-        let hits = search_names(&engine, "abc def", crate::QueryPreprocess::Auto);
-        assert_eq!(hits, vec!["c.txt"]);
-    }
-
-    #[cfg(feature = "tokenizer-lindera-ipadic")]
-    #[test]
-    fn auto_cjk_query_on_lindera_index() {
-        let dir = tempfile::tempdir().unwrap();
-        let engine = engine_with_docs(
-            dir.path(),
-            crate::TokenizerMode::LinderaIpadic,
-            &[
-                ("date.txt", "日付を確認する"),
-                ("other.txt", "無関係な内容"),
-            ],
-        );
-
-        let hits = search_names(&engine, "日付 確認", crate::QueryPreprocess::Auto);
-        assert_eq!(hits, vec!["date.txt"]);
-
-        let hits = search_names(&engine, "日付 未知語ワード", crate::QueryPreprocess::Auto);
-        assert!(hits.is_empty());
-    }
-
-    #[test]
-    fn list_files_excludes_removed() {
-        let dir = tempfile::tempdir().unwrap();
-        let index_dir = dir.path().join("index");
-        let file_a = dir.path().join("a.txt");
-        let file_b = dir.path().join("b.txt");
-        std::fs::write(&file_a, "hello").unwrap();
-        std::fs::write(&file_b, "world").unwrap();
-
-        {
-            let engine = crate::Traverze::builder()
-                .index_dir(&index_dir)
-                .mode(crate::TokenizerMode::Ngram)
-                .open()
-                .unwrap();
-            engine.index(&[file_a.clone(), file_b.clone()]).unwrap();
-        }
-        {
-            let engine = crate::Traverze::builder()
-                .index_dir(&index_dir)
-                .mode(crate::TokenizerMode::Ngram)
-                .open()
-                .unwrap();
-            engine.remove(&[file_a]).unwrap();
-
-            let files = engine.list().unwrap();
-            assert_eq!(files.len(), 1);
-            let canonical_b = std::fs::canonicalize(&file_b)
-                .unwrap()
-                .to_string_lossy()
-                .to_string();
-            assert_eq!(files[0], canonical_b);
-        }
-    }
-}
+mod tests;

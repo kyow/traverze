@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `index` and `remove` now retry the commit on a transient `PermissionDenied`, fixing intermittent failures (os error 5) on Windows caused by antivirus real-time scanning
+
 ## [0.3.0] - 2026-07-11
 
 ### Added
