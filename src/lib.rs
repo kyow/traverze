@@ -1,5 +1,7 @@
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[cfg(not(feature = "tokenizer-lindera-ipadic"))]
 use anyhow::bail;
@@ -13,16 +15,22 @@ use lindera::segmenter::Segmenter;
 #[cfg(feature = "tokenizer-lindera-ipadic")]
 use lindera_tantivy::tokenizer::LinderaTokenizer;
 use tantivy::collector::TopDocs;
+use tantivy::directory::error::{OpenReadError, OpenWriteError};
 use tantivy::query::QueryParser;
 use tantivy::schema::{
     Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{LowerCaser, NgramTokenizer, RemoveLongFilter, TextAnalyzer, TokenStream};
-use tantivy::{Index, ReloadPolicy, Term, doc};
+use tantivy::{Index, IndexWriter, ReloadPolicy, TantivyError, Term, doc};
 
 const TOKENIZER_NAME: &str = "traverze_ja";
 pub const DEFAULT_INDEX_DIR: &str = ".traverze-index";
+
+const WRITER_HEAP_SIZE: usize = 50_000_000;
+/// Number of times a commit is replayed after a transient failure (issue #23).
+const COMMIT_RETRIES: usize = 2;
+const COMMIT_RETRY_BACKOFF: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenizerMode {
@@ -164,6 +172,10 @@ impl Traverze {
                 .with_context(|| format!("failed to create index: {}", index_dir.display()))?,
         };
 
+        Self::from_index(index, mode)
+    }
+
+    fn from_index(index: Index, mode: TokenizerMode) -> Result<Self> {
         register_tokenizer(&index, mode)?;
         let schema = index.schema();
         let path_field = schema
@@ -183,52 +195,78 @@ impl Traverze {
     }
 
     pub fn index(&self, files: &[PathBuf]) -> Result<usize> {
-        let mut writer = self
-            .index
-            .writer::<tantivy::schema::TantivyDocument>(50_000_000)
-            .context("failed to create index writer")?;
+        self.commit_with_retry(|writer| {
+            let mut count = 0usize;
+            for file in files {
+                if !file.is_file() {
+                    continue;
+                }
+                let abs = normalize_path(file);
+                let content = fs::read_to_string(&abs)
+                    .or_else(|_| fs::read(&abs).map(|b| String::from_utf8_lossy(&b).into_owned()))
+                    .with_context(|| format!("failed to read file: {}", abs.display()))?;
 
-        let mut count = 0usize;
-        for file in files {
-            if !file.is_file() {
-                continue;
+                let path_text = abs.to_string_lossy().to_string();
+                writer.delete_term(Term::from_field_text(self.path_field, &path_text));
+                writer
+                    .add_document(doc!(
+                        self.path_field => path_text,
+                        self.contents_field => content,
+                    ))
+                    .context("failed to add document")?;
+                count += 1;
             }
-            let abs = normalize_path(file);
-            let content = fs::read_to_string(&abs)
-                .or_else(|_| fs::read(&abs).map(|b| String::from_utf8_lossy(&b).into_owned()))
-                .with_context(|| format!("failed to read file: {}", abs.display()))?;
-
-            let path_text = abs.to_string_lossy().to_string();
-            writer.delete_term(Term::from_field_text(self.path_field, &path_text));
-            writer
-                .add_document(doc!(
-                    self.path_field => path_text,
-                    self.contents_field => content,
-                ))
-                .context("failed to add document")?;
-            count += 1;
-        }
-
-        writer.commit().context("failed to commit index")?;
-        Ok(count)
+            Ok(count)
+        })
     }
 
     pub fn remove(&self, files: &[PathBuf]) -> Result<usize> {
-        let mut writer = self
-            .index
-            .writer::<tantivy::schema::TantivyDocument>(50_000_000)
-            .context("failed to create index writer")?;
+        self.commit_with_retry(|writer| {
+            let mut count = 0usize;
+            for file in files {
+                let abs = normalize_path(file);
+                let path_text = abs.to_string_lossy().to_string();
+                writer.delete_term(Term::from_field_text(self.path_field, &path_text));
+                count += 1;
+            }
+            Ok(count)
+        })
+    }
 
-        let mut count = 0usize;
-        for file in files {
-            let abs = normalize_path(file);
-            let path_text = abs.to_string_lossy().to_string();
-            writer.delete_term(Term::from_field_text(self.path_field, &path_text));
-            count += 1;
+    /// Runs `apply` on a fresh writer and commits, retrying the whole
+    /// operation on a transient `PermissionDenied` commit failure (issue #23:
+    /// on Windows, antivirus real-time scanning can briefly deny access to
+    /// freshly written segment files). Replaying is safe because `index` and
+    /// `remove` both issue `delete_term` before any `add_document`, making
+    /// them idempotent. The failed writer must be dropped before the next
+    /// attempt so its lockfile is released.
+    fn commit_with_retry<F>(&self, apply: F) -> Result<usize>
+    where
+        F: Fn(&mut IndexWriter) -> Result<usize>,
+    {
+        for attempt in 0..=COMMIT_RETRIES {
+            let mut writer = self
+                .index
+                .writer::<tantivy::schema::TantivyDocument>(WRITER_HEAP_SIZE)
+                .context("failed to create index writer")?;
+            let count = apply(&mut writer)?;
+            match writer.commit() {
+                Ok(_) => return Ok(count),
+                Err(err) if attempt < COMMIT_RETRIES && is_transient_commit_error(&err) => {
+                    drop(writer);
+                    std::thread::sleep(COMMIT_RETRY_BACKOFF * (attempt as u32 + 1));
+                }
+                Err(err) => {
+                    let context = if attempt > 0 {
+                        format!("failed to commit index (still failing after {attempt} retries)")
+                    } else {
+                        "failed to commit index".to_string()
+                    };
+                    return Err(err).context(context);
+                }
+            }
         }
-
-        writer.commit().context("failed to commit index")?;
-        Ok(count)
+        unreachable!("commit_with_retry loop exits only via return")
     }
 
     pub fn search(&self, query: &str, options: SearchOptions) -> Result<Vec<SearchHit>> {
@@ -400,6 +438,23 @@ fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result
             }
         }
     }
+}
+
+/// Returns `true` for commit errors caused by a transient
+/// `PermissionDenied`, e.g. an antivirus scanner briefly holding a freshly
+/// written segment file on Windows (issue #23). Tantivy's error variants do
+/// not expose the underlying `io::Error` via `source()`, so the variants
+/// carrying one are matched directly.
+fn is_transient_commit_error(err: &TantivyError) -> bool {
+    let kind = match err {
+        TantivyError::IoError(io_error) => Some(io_error.kind()),
+        TantivyError::OpenWriteError(OpenWriteError::IoError { io_error, .. })
+        | TantivyError::OpenReadError(OpenReadError::IoError { io_error, .. }) => {
+            Some(io_error.kind())
+        }
+        _ => None,
+    };
+    kind == Some(io::ErrorKind::PermissionDenied)
 }
 
 /// Escapes `\` and `"` so an arbitrary token can be embedded inside a
@@ -730,6 +785,177 @@ mod tests {
 
         let hits = search_names(&engine, "日付 未知語ワード", crate::QueryPreprocess::Auto);
         assert!(hits.is_empty());
+    }
+
+    // Issue #23: commit must transparently retry on transient PermissionDenied.
+    mod commit_retry {
+        use std::path::Path;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use tantivy::directory::error::{DeleteError, OpenReadError, OpenWriteError};
+        use tantivy::directory::{
+            Directory, FileHandle, RamDirectory, WatchCallback, WatchHandle, WritePtr,
+        };
+        use tantivy::{Index, IndexSettings, TantivyError};
+
+        /// Wraps a `RamDirectory` and fails the next `failures_left` segment
+        /// file writes with `PermissionDenied`, simulating the antivirus
+        /// interference from issue #23. Lockfiles are exempt so that writer
+        /// creation (which must not be retried) always succeeds.
+        #[derive(Clone, Debug)]
+        struct FailingDirectory {
+            inner: RamDirectory,
+            failures_left: Arc<AtomicUsize>,
+        }
+
+        impl FailingDirectory {
+            fn new() -> Self {
+                Self {
+                    inner: RamDirectory::create(),
+                    failures_left: Arc::new(AtomicUsize::new(0)),
+                }
+            }
+
+            fn arm(&self, failures: usize) {
+                self.failures_left.store(failures, Ordering::SeqCst);
+            }
+
+            fn armed(&self) -> usize {
+                self.failures_left.load(Ordering::SeqCst)
+            }
+        }
+
+        impl Directory for FailingDirectory {
+            fn get_file_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>, OpenReadError> {
+                self.inner.get_file_handle(path)
+            }
+
+            fn delete(&self, path: &Path) -> Result<(), DeleteError> {
+                self.inner.delete(path)
+            }
+
+            fn exists(&self, path: &Path) -> Result<bool, OpenReadError> {
+                self.inner.exists(path)
+            }
+
+            fn open_write(&self, path: &Path) -> Result<WritePtr, OpenWriteError> {
+                let is_lock = path.extension().is_some_and(|ext| ext == "lock");
+                if !is_lock
+                    && self
+                        .failures_left
+                        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                        .is_ok()
+                {
+                    return Err(OpenWriteError::wrap_io_error(
+                        std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+                        path.to_path_buf(),
+                    ));
+                }
+                self.inner.open_write(path)
+            }
+
+            fn atomic_read(&self, path: &Path) -> Result<Vec<u8>, OpenReadError> {
+                self.inner.atomic_read(path)
+            }
+
+            fn atomic_write(&self, path: &Path, data: &[u8]) -> std::io::Result<()> {
+                self.inner.atomic_write(path, data)
+            }
+
+            fn sync_directory(&self) -> std::io::Result<()> {
+                self.inner.sync_directory()
+            }
+
+            fn watch(&self, watch_callback: WatchCallback) -> tantivy::Result<WatchHandle> {
+                self.inner.watch(watch_callback)
+            }
+        }
+
+        fn engine_on(directory: FailingDirectory) -> crate::Traverze {
+            let index = Index::create(
+                directory,
+                crate::build_schema(false),
+                IndexSettings::default(),
+            )
+            .unwrap();
+            crate::Traverze::from_index(index, crate::TokenizerMode::Ngram).unwrap()
+        }
+
+        #[test]
+        fn index_recovers_from_transient_permission_denied() {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("a.txt");
+            std::fs::write(&file, "hello world").unwrap();
+
+            let directory = FailingDirectory::new();
+            let engine = engine_on(directory.clone());
+            directory.arm(1);
+
+            let count = engine.index(&[file]).unwrap();
+            assert_eq!(count, 1);
+            assert_eq!(directory.armed(), 0, "injected failure did not fire");
+            assert_eq!(engine.list().unwrap().len(), 1);
+        }
+
+        #[test]
+        fn remove_recovers_from_transient_permission_denied() {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("a.txt");
+            std::fs::write(&file, "hello world").unwrap();
+
+            let directory = FailingDirectory::new();
+            let engine = engine_on(directory.clone());
+            engine.index(std::slice::from_ref(&file)).unwrap();
+            directory.arm(1);
+
+            let count = engine.remove(&[file]).unwrap();
+            assert_eq!(count, 1);
+            assert_eq!(directory.armed(), 0, "injected failure did not fire");
+            assert!(engine.list().unwrap().is_empty());
+        }
+
+        #[test]
+        fn persistent_permission_denied_fails_after_retries() {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("a.txt");
+            std::fs::write(&file, "hello world").unwrap();
+
+            let directory = FailingDirectory::new();
+            let engine = engine_on(directory.clone());
+            directory.arm(usize::MAX);
+
+            let err = engine.index(&[file]).unwrap_err();
+            assert!(
+                err.to_string().contains("after 2 retries"),
+                "unexpected error: {err:#}"
+            );
+        }
+
+        #[test]
+        fn transient_error_classification() {
+            use std::io;
+
+            let perm = || io::Error::from(io::ErrorKind::PermissionDenied);
+            assert!(crate::is_transient_commit_error(&TantivyError::IoError(
+                Arc::new(perm())
+            )));
+            assert!(crate::is_transient_commit_error(
+                &TantivyError::OpenWriteError(OpenWriteError::wrap_io_error(
+                    perm(),
+                    "seg.idx".into()
+                ))
+            ));
+            assert!(!crate::is_transient_commit_error(
+                &TantivyError::OpenWriteError(OpenWriteError::wrap_io_error(
+                    io::Error::from(io::ErrorKind::NotFound),
+                    "seg.idx".into()
+                ))
+            ));
+            assert!(!crate::is_transient_commit_error(
+                &TantivyError::IndexAlreadyExists
+            ));
+        }
     }
 
     #[test]
