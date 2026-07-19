@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 一時的な `PermissionDenied` 発生時に `index` / `remove` がコミットをリトライするよう修正（Windows でウイルス対策ソフトのリアルタイムスキャンに起因する断続的な os error 5 の解消）
+
 ## [0.3.0] - 2026-07-11
 
 ### Added
