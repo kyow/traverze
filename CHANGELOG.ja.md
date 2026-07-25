@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `QueryPreprocess::Auto` がクエリ文字列を組み立ててクエリパーサーで再パースする方式をやめ、解析済みトークンから `BooleanQuery` を直接構築するよう変更(クォート・エスケープ層を撤去。エッジケースで検索結果やスコアが変わる可能性あり)
+
 ### Fixed
 
 - 一時的な `PermissionDenied` 発生時に `index` / `remove` がコミットをリトライするよう修正（Windows でウイルス対策ソフトのリアルタイムスキャンに起因する断続的な os error 5 の解消）

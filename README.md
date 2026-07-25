@@ -50,7 +50,7 @@ Notes:
 - `list` outputs one indexed file path per line.
 - `--query-preprocess` controls how the query is tokenized before searching:
   - `plain` — pass the query string directly to Tantivy's query parser.
-  - `auto` (default) — tokenize the query with the index's analyzer, combine tokens with AND. CJK substrings are wrapped as phrase queries to preserve word boundaries. Every token is quoted and escaped, so Tantivy query syntax (reserved keywords such as `AND`/`OR`/`NOT` and special characters) is treated as literal text.
+  - `auto` (default) — tokenize the query with the index's analyzer and build the search query directly from the tokens, combined with AND. CJK tokens get a character-level phrase fallback to preserve word boundaries. The query string never goes through the query parser, so Tantivy query syntax (reserved keywords such as `AND`/`OR`/`NOT` and special characters) is treated as literal text.
 
 ### Search output format
 

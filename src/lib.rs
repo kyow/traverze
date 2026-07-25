@@ -16,7 +16,7 @@ use lindera::segmenter::Segmenter;
 use lindera_tantivy::tokenizer::LinderaTokenizer;
 use tantivy::collector::TopDocs;
 use tantivy::directory::error::{OpenReadError, OpenWriteError};
-use tantivy::query::QueryParser;
+use tantivy::query::{BooleanQuery, Occur, PhraseQuery, Query, QueryParser, TermQuery};
 use tantivy::schema::{
     Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
@@ -278,12 +278,24 @@ impl Traverze {
             .context("failed to build index reader")?;
         let searcher = reader.searcher();
 
-        let query_parser = QueryParser::for_index(&self.index, vec![self.contents_field]);
-        let processed_query = preprocess_query(&self.index, query, options.query_preprocess)?;
-        let (parsed_query, parse_errors) = query_parser.parse_query_lenient(&processed_query);
-        if !parse_errors.is_empty() {
-            eprintln!("warning: query parse errors (ignored): {:?}", parse_errors);
-        }
+        // Auto mode builds the query programmatically (issue #28); the raw
+        // string only reaches the parser in plain mode or when the query
+        // analyzes to no tokens.
+        let auto_query = match options.query_preprocess {
+            QueryPreprocess::Auto => build_auto_query(&self.index, self.contents_field, query)?,
+            QueryPreprocess::Plain => None,
+        };
+        let parsed_query = match auto_query {
+            Some(built) => built,
+            None => {
+                let query_parser = QueryParser::for_index(&self.index, vec![self.contents_field]);
+                let (parsed, parse_errors) = query_parser.parse_query_lenient(query);
+                if !parse_errors.is_empty() {
+                    eprintln!("warning: query parse errors (ignored): {:?}", parse_errors);
+                }
+                parsed
+            }
+        };
 
         let top_docs = searcher
             .search(&parsed_query, &TopDocs::with_limit(options.limit))
@@ -371,73 +383,67 @@ impl Traverze {
     }
 }
 
-fn preprocess_query(index: &Index, query: &str, mode: QueryPreprocess) -> Result<String> {
-    match mode {
-        QueryPreprocess::Plain => Ok(query.to_string()),
-        QueryPreprocess::Auto => {
-            let mut analyzer = index
-                .tokenizers()
-                .get(TOKENIZER_NAME)
-                .ok_or_else(|| anyhow!("`{TOKENIZER_NAME}` tokenizer is not registered"))?;
-            let mut stream = analyzer.token_stream(query);
-            let mut terms = Vec::new();
-            stream.process(&mut |token| {
-                // Drop tokens containing whitespace. The ngram tokenizer emits
-                // grams spanning word boundaries (e.g. "c d" for "abc def");
-                // requiring them would turn a multi-word query into a substring
-                // search, while the per-word grams alone give the intended
-                // "AND across words" semantics.
-                if !token.text.is_empty() && !token.text.chars().any(char::is_whitespace) {
-                    terms.push(token.text.to_string());
-                }
-            });
-            if terms.is_empty() {
-                // eprintln!(
-                //     "query_preprocess\tmode={mode:?}\tinput={query}\ttokens=[]\toutput={query}"
-                // );
-                Ok(query.to_string())
-            } else {
-                // Build an AND query where each morphological token is expanded
-                // with a character-level phrase fallback.  This handles the case
-                // where the index tokenizer splits a word differently from the
-                // query tokenizer due to context-dependent morphological analysis.
-                //
-                // For a CJK token with >1 char (e.g. "日付") we emit:
-                //   ("日付" OR "日 付")
-                // The phrase query "日 付" matches when the index has the
-                // individual characters as adjacent tokens.
-                //
-                // Every token is emitted double-quoted (with `\` and `"`
-                // escaped): a quoted token that analyzes to a single term
-                // parses as a plain term query, and quoting keeps embedded
-                // Tantivy syntax characters (`:`, `(`, `-`, ...) and reserved
-                // keywords (AND, OR, ...) from being parsed as query structure.
-                let expanded_parts: Vec<String> = terms
-                    .iter()
-                    .map(|term| {
-                        let chars: Vec<char> = term.chars().collect();
-                        if chars.len() > 1 && chars.iter().all(|c| is_cjk_like(*c)) {
-                            let char_phrase = chars
-                                .iter()
-                                .map(|c| c.to_string())
-                                .collect::<Vec<_>>()
-                                .join(" ");
-                            format!("(\"{term}\" OR \"{char_phrase}\")")
-                        } else {
-                            format!("\"{}\"", escape_for_phrase(term))
-                        }
-                    })
-                    .collect();
-                let and_query = expanded_parts.join(" AND ");
-                // eprintln!(
-                //     "query_preprocess\tmode={mode:?}\tinput={query}\ttokens={}\texpanded={}\toutput={and_query}",
-                //     terms.join("|"),
-                //     expanded_parts.join("|")
-                // );
-                Ok(and_query)
-            }
+/// Builds the `QueryPreprocess::Auto` query directly as a `BooleanQuery`
+/// instead of assembling a query-language string for re-parsing (issue #28),
+/// so no quoting/escaping layer sits between the analyzed tokens and the
+/// executed query and token text is always matched literally.
+///
+/// Each morphological token becomes a `Must` clause, expanded with a
+/// character-level phrase fallback. This handles the case where the index
+/// tokenizer splits a word differently from the query tokenizer due to
+/// context-dependent morphological analysis: for a CJK token with >1 char
+/// (e.g. "日付") the clause is `term("日付") OR phrase(["日", "付"])`, and
+/// the phrase matches when the index has the individual characters as
+/// adjacent tokens.
+///
+/// Returns `None` when the query analyzes to no tokens; the caller falls
+/// back to parsing the raw query string, as before.
+fn build_auto_query(index: &Index, field: Field, query: &str) -> Result<Option<Box<dyn Query>>> {
+    let mut analyzer = index
+        .tokenizers()
+        .get(TOKENIZER_NAME)
+        .ok_or_else(|| anyhow!("`{TOKENIZER_NAME}` tokenizer is not registered"))?;
+    let mut stream = analyzer.token_stream(query);
+    let mut terms = Vec::new();
+    stream.process(&mut |token| {
+        // Drop tokens containing whitespace. The ngram tokenizer emits
+        // grams spanning word boundaries (e.g. "c d" for "abc def");
+        // requiring them would turn a multi-word query into a substring
+        // search, while the per-word grams alone give the intended
+        // "AND across words" semantics.
+        if !token.text.is_empty() && !token.text.chars().any(char::is_whitespace) {
+            terms.push(token.text.to_string());
         }
+    });
+    if terms.is_empty() {
+        return Ok(None);
     }
+    let clauses = terms
+        .iter()
+        .map(|text| {
+            let term_query: Box<dyn Query> = Box::new(TermQuery::new(
+                Term::from_field_text(field, text),
+                IndexRecordOption::WithFreqs,
+            ));
+            let chars: Vec<char> = text.chars().collect();
+            if chars.len() > 1 && chars.iter().all(|c| is_cjk_like(*c)) {
+                let char_phrase = PhraseQuery::new(
+                    chars
+                        .iter()
+                        .map(|c| Term::from_field_text(field, &c.to_string()))
+                        .collect(),
+                );
+                let expanded = BooleanQuery::new(vec![
+                    (Occur::Should, term_query),
+                    (Occur::Should, Box::new(char_phrase) as Box<dyn Query>),
+                ]);
+                (Occur::Must, Box::new(expanded) as Box<dyn Query>)
+            } else {
+                (Occur::Must, term_query)
+            }
+        })
+        .collect();
+    Ok(Some(Box::new(BooleanQuery::new(clauses))))
 }
 
 /// Returns `true` for commit errors caused by a transient
@@ -455,12 +461,6 @@ fn is_transient_commit_error(err: &TantivyError) -> bool {
         _ => None,
     };
     kind == Some(io::ErrorKind::PermissionDenied)
-}
-
-/// Escapes `\` and `"` so an arbitrary token can be embedded inside a
-/// double-quoted Tantivy phrase without terminating or altering it.
-fn escape_for_phrase(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Returns `true` for CJK ideographs, Hiragana, and Katakana characters

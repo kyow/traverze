@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `QueryPreprocess::Auto` now builds the search query directly as a `BooleanQuery` from the analyzed tokens instead of assembling a query string that is re-parsed by the query parser, removing the quoting/escaping layer; result sets and scores may shift in edge cases
+
 ### Fixed
 
 - `index` and `remove` now retry the commit on a transient `PermissionDenied`, fixing intermittent failures (os error 5) on Windows caused by antivirus real-time scanning
